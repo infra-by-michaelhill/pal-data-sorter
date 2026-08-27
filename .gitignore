@@ -1,0 +1,14 @@
+# Generated launcher (created by the Windows installer)
+run-windows.bat
+
+# Python
+__pycache__/
+*.pyc
+
+# OS cruft
+.DS_Store
+Thumbs.db
+
+# Editors
+.vscode/
+.idea/

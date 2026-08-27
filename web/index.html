@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PAL Data Sorter</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+</head>
+<body>
+
+  <!-- ============ Login screen ============ -->
+  <section id="login" class="login-wrap">
+    <div class="login-card">
+      <div class="brand">
+        <svg viewBox="0 0 100 100" width="26" height="26" aria-hidden="true">
+          <g fill="currentColor">
+            <path d="M 14 18 L 86 18 L 58 50 L 42 50 Z"></path>
+            <path d="M 42 58 L 58 58 L 50 86 Z"></path>
+          </g>
+        </svg>
+        <span>PAL Data Sorter</span>
+      </div>
+      <h1>Sign in</h1>
+      <p class="lede">Use your Pool Players Amateur League account. We pull all the
+        standings once, then everything sorts instantly.</p>
+
+      <div id="loginError" class="alert hidden"></div>
+
+      <form id="loginForm" autocomplete="on">
+        <div class="field">
+          <label for="email">Email</label>
+          <input id="email" type="email" autocomplete="username" required placeholder="you@example.com">
+        </div>
+        <div class="field">
+          <label for="password">Password</label>
+          <input id="password" type="password" autocomplete="current-password" required placeholder="••••••••">
+        </div>
+        <label class="checkbox">
+          <input id="remember" type="checkbox">
+          Keep me signed in on this device
+        </label>
+        <button class="btn btn-primary" id="loginBtn" type="submit">Sign in &amp; load data</button>
+      </form>
+
+      <p class="note" id="loginNote">Your credentials are sent only to this app on
+        your own computer, used once to log in to the PAL site. Checking the box
+        stores them in this browser so you don't retype them next time.</p>
+    </div>
+  </section>
+
+  <!-- ============ App screen ============ -->
+  <section id="app" class="hidden">
+    <div class="topbar">
+      <div class="brand">
+        <svg viewBox="0 0 100 100" width="22" height="22" aria-hidden="true">
+          <g fill="currentColor">
+            <path d="M 14 18 L 86 18 L 58 50 L 42 50 Z"></path>
+            <path d="M 42 58 L 58 58 L 50 86 Z"></path>
+          </g>
+        </svg>
+        <span>PAL Data Sorter</span>
+      </div>
+      <div class="topbar-actions">
+        <span class="meta" id="fetchedMeta"></span>
+        <button class="btn btn-ghost btn-sm" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+        <button class="btn btn-secondary btn-sm" id="refreshBtn">Refresh</button>
+        <button class="btn btn-ghost btn-sm" id="signoutBtn">Sign out</button>
+      </div>
+    </div>
+
+    <div class="container">
+      <div class="controls">
+        <div class="control-group">
+          <span>League</span>
+          <div class="segmented" id="leagueSeg" role="tablist"></div>
+        </div>
+        <div class="control-group" id="bracketGroup">
+          <span>Bracket</span>
+          <div class="segmented" id="bracketSeg" role="tablist"></div>
+        </div>
+        <div class="spacer"></div>
+        <div class="control-group">
+          <span>&nbsp;</span>
+          <button class="btn btn-primary btn-sm" id="csvBtn">Export CSV</button>
+        </div>
+      </div>
+
+      <div class="stats" id="stats"></div>
+
+      <div class="table-card">
+        <div class="table-scroll">
+          <table id="table">
+            <thead id="thead"></thead>
+            <tbody id="tbody"></tbody>
+          </table>
+        </div>
+        <div class="empty hidden" id="emptyState">No players in this selection.</div>
+      </div>
+    </div>
+  </section>
+
+  <script src="app.js"></script>
+</body>
+</html>
