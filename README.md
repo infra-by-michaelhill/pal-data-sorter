@@ -2,14 +2,18 @@
 
 A tiny local web app for browsing **Pool Players Amateur League** standings.
 
-Sign in once with your PAL account and it pulls the standings for both current
-leagues — **9 Ball 5th Season** (Bracket A + B) and **9 Ball Scotch Doubles** —
-all at once. After that, switching league/bracket and re-sorting is instant and
-offline, with one-click **CSV export**.
+Sign in once with your PAL account and it pulls the standings for **whatever
+leagues are currently active** — today that's *9 Ball 5th Season* (Bracket A + B)
+and *9 Ball Scotch Doubles* — all at once. After that, switching league/bracket
+and re-sorting is instant and offline, with one-click **CSV export**.
 
+- **Nothing is hardcoded to a season.** The active seasons and each one's
+  brackets are discovered live from the site, so it keeps working across
+  season rollovers — singles or doubles, one bracket or two, any names.
 - Sort by any meaningful column — **Points** (default), **Points / Match**,
   **Match Wins**, **Losses**, **Matches**, **Win %**, or player name.
-- Standard league lets you view **Bracket A**, **Bracket B**, or **Both**.
+- A league with two brackets lets you view **A**, **B**, or **Both** (with a
+  bracket badge); a single-bracket league just shows its table.
 - Light/dark theme, styled after the Crucible design system.
 - No frameworks, no `pip install` — **Python standard library only**.
 
@@ -51,9 +55,10 @@ it; press `Ctrl+C` to stop.
 
 The browser can't log into the PAL site directly (cross-origin requests and the
 site's Django CSRF flow both block it), so a small local Python server
-(`app.py`) performs the login and scrapes the season standings pages, then hands
-the browser the full dataset as JSON. From then on the front end (`web/`) does
-all filtering and sorting locally — no more live requests until you hit
+(`app.py`) performs the login, reads the **active-seasons list** to discover
+which seasons exist, scrapes each one's standings (detecting its brackets), then
+hands the browser the full dataset as JSON. From then on the front end (`web/`)
+does all filtering and sorting locally — no more live requests until you hit
 **Refresh**.
 
 ```
@@ -64,8 +69,9 @@ web/app.js        data caching, sorting, CSV export
 install-mac.command / install-windows.bat   one-click setup + desktop shortcut
 ```
 
-The seasons are pinned in `app.py` (`LEAGUES`); update those numbers when new
-seasons start.
+There's nothing to change when seasons roll over — `discover_seasons()` reads
+the site's active-seasons list and `parse_brackets()` detects each season's
+bracket layout at fetch time.
 
 <br>
 

@@ -4,7 +4,8 @@
 
 const $ = (s) => document.querySelector(s);
 
-const LEAGUE_LABELS = { standard: "Standard", scotch: "Scotch Doubles" };
+// League/season names and bracket labels are whatever the server discovered on
+// the PAL site — nothing here is hardcoded to a particular season.
 
 // Columns. `default sort` is Points (GP) descending.
 const COLUMNS = [
@@ -165,7 +166,7 @@ function renderLeagueSeg() {
   state.data.order.forEach((key) => {
     if (!state.data.leagues[key]) return;
     const btn = document.createElement("button");
-    btn.textContent = LEAGUE_LABELS[key] || state.data.leagues[key].name;
+    btn.textContent = state.data.leagues[key].name;
     btn.setAttribute("role", "tab");
     btn.setAttribute("aria-selected", key === state.league);
     btn.onclick = () => {
@@ -187,7 +188,11 @@ function renderBracketSeg() {
   // Single-bracket leagues (Scotch Doubles) don't need a bracket chooser.
   if (labels.length < 2) { group.classList.add("hidden"); return; }
   group.classList.remove("hidden");
-  const options = [...labels.map((l) => ({ v: l, t: "Bracket " + l })), { v: "__both__", t: "Both" }];
+  // single-letter labels read nicely as "Bracket A"; anything else shown as-is
+  const options = [
+    ...labels.map((l) => ({ v: l, t: l.length === 1 ? "Bracket " + l : l })),
+    { v: "__both__", t: "Both" },
+  ];
   options.forEach((o) => {
     const btn = document.createElement("button");
     btn.textContent = o.t;
@@ -341,8 +346,10 @@ $("#csvBtn").addEventListener("click", () => {
   const blob = new Blob([lines.join("\n")], { type: "text/csv" });
   const a = document.createElement("a");
   a.href = URL.createObjectURL(blob);
-  const bkt = state.showBracketCol ? "both" : (state.bracket || "all");
-  a.download = `pal_${state.league}_${bkt}.csv`.replace("__both__", "both");
+  const slug = (s) => String(s).toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_|_$/g, "");
+  const leagueSlug = slug(state.data.leagues[state.league].name) || state.league;
+  const bkt = state.showBracketCol ? "both" : slug(state.bracket || "all");
+  a.download = `pal_${leagueSlug}_${bkt}.csv`;
   a.click();
   URL.revokeObjectURL(a.href);
 });

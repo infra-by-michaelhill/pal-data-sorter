@@ -37,12 +37,10 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
       "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Safari/537.36")
 WEB_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "web")
 
-# The two leagues that currently exist. Seasons are locked here so the UI never
-# has to ask for a season number.
-LEAGUES = [
-    {"key": "standard", "name": "9 Ball 5th Season",     "season": 7},
-    {"key": "scotch",   "name": "9 Ball Scotch Doubles", "season": 6},
-]
+# Nothing about the seasons is hardcoded — the active seasons and their brackets
+# are discovered at fetch time (see discover_seasons / parse_brackets), so this
+# keeps working when the seasons roll over, whether they're singles or doubles
+# and whether each has one bracket or two.
 
 
 # ---------------------------------------------------------------------------
@@ -105,35 +103,86 @@ def _rows_from_tbody(block):
 def parse_brackets(html):
     """Return {bracket_label: [rows]} for every standings table on a season page.
 
-    Standard seasons have BRACKET A and BRACKET B; Scotch Doubles has a single
-    table with no bracket label (returned under 'Main').
+    Discovered from the page, so it adapts to whatever exists: a two-bracket
+    season yields {'A': [...], 'B': [...]}; a single-bracket (singles or scotch)
+    season yields {'Main': [...]}. Any additional unlabeled tables fall back to
+    'Group 1', 'Group 2', … so nothing is silently dropped.
     """
-    brackets = {}
+    tables = []
     for m in re.finditer(r"<tbody[^>]*>(.*?)</tbody>", html, re.S):
         if "/league/team/" not in m.group(1):
             continue
         rows = _rows_from_tbody(m.group(1))
         if not rows:
             continue
-        preceding = re.findall(r"BRACKET\s+([A-Z])\b", html[:m.start()])
-        label = preceding[-1] if preceding else "Main"
-        brackets[label] = rows
+        letters = re.findall(r"BRACKET\s+([A-Z])\b", html[:m.start()])
+        tables.append((letters[-1] if letters else None, rows))
+
+    brackets, unlabeled = {}, 0
+    single = len(tables) == 1
+    for label, rows in tables:
+        if label is None:
+            unlabeled += 1
+            label = "Main" if single else f"Group {unlabeled}"
+        # guard against a duplicate label collision
+        key, n = label, 2
+        while key in brackets:
+            key = f"{label} ({n})"; n += 1
+        brackets[key] = rows
     return brackets
+
+
+SEASON_LINK = re.compile(r"/league/season/(\d+)/")
+H2 = re.compile(r"<h2[^>]*>\s*(.*?)\s*</h2>", re.S)
+
+
+def _clean_name(raw):
+    name = re.sub(r"<[^>]+>", "", raw)
+    name = re.sub(r"\s+", " ", name).strip()
+    return re.sub(r"^PAL\s+", "", name, flags=re.I)  # drop the "PAL " prefix
+
+
+def discover_seasons(client):
+    """Scrape the active-seasons list into [{'season': id, 'name': str}, ...]
+    in the order the site presents them. Not hardcoded, so it follows rollovers.
+    """
+    html = client.get(f"{BASE}/league/seasons/")
+    seasons, seen = [], set()
+    for m in SEASON_LINK.finditer(html):
+        sid = int(m.group(1))
+        if sid in seen:
+            continue
+        seen.add(sid)
+        # nearest preceding <h2> that looks like a season title (skip the venue)
+        name = None
+        for head in H2.findall(html[:m.start()]):
+            txt = _clean_name(head)
+            if txt and not re.match(r"(venue|@|active seasons)", txt, re.I):
+                name = txt
+        seasons.append({"season": sid, "name": name or f"Season {sid}"})
+    return seasons
 
 
 def build_dataset(username, password):
     client = Client()
     login(client, username, password)
-    leagues = {}
-    for lg in LEAGUES:
-        html = client.get(f"{BASE}/league/season/{lg['season']}/")
-        leagues[lg["key"]] = {
-            "name": lg["name"], "season": lg["season"],
-            "brackets": parse_brackets(html),
-        }
+    seasons = discover_seasons(client)
+    if not seasons:
+        raise RuntimeError("No active seasons found on the PAL site.")
+    leagues, order = {}, []
+    for s in seasons:
+        html = client.get(f"{BASE}/league/season/{s['season']}/")
+        brackets = parse_brackets(html)
+        if not brackets:
+            continue  # a season with no standings yet — skip it
+        key = f"s{s['season']}"
+        order.append(key)
+        leagues[key] = {"name": s["name"], "season": s["season"], "brackets": brackets}
+    if not leagues:
+        raise RuntimeError("Active seasons were found but none have standings yet.")
     return {
         "fetchedAt": datetime.datetime.now().isoformat(timespec="seconds"),
-        "order": [lg["key"] for lg in LEAGUES],
+        "order": order,
         "leagues": leagues,
     }
 
