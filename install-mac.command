@@ -49,7 +49,7 @@ cat > "$LAUNCHER" <<LAUNCH
 cd "$APP_DIR"
 echo "Starting PAL Data Sorter — a browser tab will open shortly."
 echo "Keep this window open while you use the app; close it or press Ctrl+C to quit."
-exec "$PYBIN" app.py --open
+exec "$PYBIN" serve.py --open
 LAUNCH
 chmod +x "$LAUNCHER"
 

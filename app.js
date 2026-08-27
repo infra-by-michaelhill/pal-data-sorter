@@ -34,7 +34,7 @@ const DETAIL_COLUMNS = [
 const DEFAULT_SORT = { key: "GP", dir: "desc" };
 
 const state = {
-  data: null, token: null,
+  data: null, cookie: null,
   league: "standard", bracket: null, showBracketCol: false,
   sort: { ...DEFAULT_SORT },
   view: "standings",                    // "standings" | "player"
@@ -163,7 +163,7 @@ async function fetchData(user, password) {
 async function fetchPlayer(teamId, name) {
   const res = await fetch("/api/player", {
     method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ token: state.token, team_id: teamId, name }),
+    body: JSON.stringify({ cookie: state.cookie, team_id: teamId, name }),
   });
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Request failed");
@@ -188,7 +188,7 @@ $("#loginForm").addEventListener("submit", async (e) => {
 
 $("#signoutBtn").addEventListener("click", () => {
   store.clearAll();
-  state.data = null; state.token = null;
+  state.data = null; state.cookie = null;
   state.granular = { loaded: false, loading: false, byId: {}, done: 0, total: 0, errors: 0 };
   state.view = "standings";
   $("#app").classList.add("hidden"); $("#login").classList.remove("hidden");
@@ -207,7 +207,7 @@ $("#refreshBtn").addEventListener("click", async () => {
       if (!user || !password) throw new Error("cancelled");
     }
     const data = await fetchData(user, password);
-    // a refresh invalidates granular (new token); drop it
+    // a refresh invalidates granular (new cookie); drop it
     state.granular = { loaded: false, loading: false, byId: {}, done: 0, total: 0, errors: 0 };
     store.cacheGranular(null);
     onData(data);
@@ -218,7 +218,7 @@ $("#refreshBtn").addEventListener("click", async () => {
 
 // ---- once we have data ---------------------------------------------------
 function onData(data) {
-  state.data = data; state.token = data.token || null;
+  state.data = data; state.cookie = data.cookie || null;
   store.cacheData(data);
   state.league = (data.order && data.order[0]) || Object.keys(data.leagues)[0];
   state.sort = { ...DEFAULT_SORT };
@@ -262,7 +262,7 @@ async function pool(items, size, worker) {
 }
 
 async function loadGranular() {
-  if (!state.token) { renderGranularControl("Session expired — sign in again to load detail data."); return; }
+  if (!state.cookie) { renderGranularControl("Session expired — sign in again to load detail data."); return; }
   const players = allPlayers();
   const g = state.granular;
   g.loading = true; g.errors = 0; g.done = 0; g.total = players.length; g.byId = {};

@@ -1,0 +1,5 @@
+# Files that shouldn't ship to Vercel (local-only tooling)
+serve.py
+install-mac.command
+install-windows.bat
+run-windows.bat

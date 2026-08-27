@@ -1,6 +1,7 @@
 # PAL Data Sorter
 
-A tiny local web app for browsing **Pool Players Amateur League** standings.
+A tiny web app for browsing **Pool Players Amateur League** standings — runs
+locally with one Python file, or deploys free to Vercel.
 
 Sign in once with your PAL account and it pulls the standings for **whatever
 leagues are currently active** — today that's *9 Ball 5th Season* (Bracket A + B)
@@ -49,36 +50,66 @@ shortcut** you double-click to launch the app.
 
 ### Run it manually (any OS)
 ```bash
-python3 app.py --open        # or:  py -3 app.py --open   on Windows
+python3 serve.py --open      # or:  py -3 serve.py --open   on Windows
 ```
 Then open <http://127.0.0.1:8765>. Leave the terminal window open while you use
 it; press `Ctrl+C` to stop.
 
 <br>
 
+## Deploy free to Vercel
+
+The app is structured as a static frontend plus two Python serverless functions,
+so it drops onto Vercel's free (Hobby) tier — the static page is always instant
+(CDN) and the functions cold-start in ~1–2s.
+
+1. Push this repo to GitHub (already done if you cloned it from there).
+2. At [vercel.com/new](https://vercel.com/new), **Import** the repo.
+3. Framework preset: **Other** (leave build/output settings empty). No
+   environment variables are needed.
+4. **Deploy.** You'll get a URL like `https://pal-data-sorter.vercel.app`.
+
+Or from the CLI: `npm i -g vercel && vercel` in this folder.
+
+Nothing to configure — Vercel serves the root files statically and turns
+`api/data.py` and `api/player.py` into functions automatically. Each new push to
+`main` redeploys.
+
+> **Heads-up on hosting:** once it's on a public URL, anyone with the link who
+> has a valid PAL account can use it, and their credentials transit Vercel's
+> servers to reach the PAL site. It only ever touches their *own* PAL account,
+> but keep the URL private and treat it as a personal tool. If PAL ever blocks
+> requests from cloud IPs, run it locally instead.
+
+<br>
+
 ## How it works
 
 The browser can't log into the PAL site directly (cross-origin requests and the
-site's Django CSRF flow both block it), so a small local Python server
-(`app.py`) performs the login, reads the **active-seasons list** to discover
-which seasons exist, scrapes each one's standings (detecting its brackets), then
-hands the browser the full dataset as JSON. From then on the front end (`web/`)
-does all filtering and sorting locally — no more live requests until you hit
-**Refresh**.
+site's Django CSRF flow both block it), so the backend performs the login, reads
+the **active-seasons list** to discover which seasons exist, scrapes each one's
+standings (detecting its brackets), and hands the browser the full dataset as
+JSON plus a PAL session cookie. From then on the front end does all filtering
+and sorting locally — no more live requests until you hit **Refresh**.
 
 Granular data is loaded on demand: the browser asks `/api/player` for each team
-(reusing the login session), the server parses that team's match-history page,
-and the front end computes the averages and renders the detail view — all
-locally cached, so it's fetched at most once per session.
+(passing back the cookie from login), the backend parses that team's
+match-history page, and the front end computes the averages and renders the
+detail view — locally cached, so it's fetched at most once per session.
+
+The scraping core lives in `api/_pal.py` and is shared by both the local dev
+server and the Vercel functions, so local and hosted behave identically.
 
 ```
-app.py            local web server + PAL scraper (stdlib only)
-                  /api/data   -> standings for all active leagues
-                  /api/player -> one team's match history (granular)
-web/index.html    login screen + app shell
-web/styles.css    Crucible-derived theme
-web/app.js        data caching, sorting, granular loading, detail view, CSV export
-install-mac.command / install-windows.bat   one-click setup + desktop shortcut
+api/_pal.py       shared PAL scraper (stdlib only) — not a route (leading _)
+api/data.py       serverless fn: POST /api/data   -> standings for all leagues + cookie
+api/player.py     serverless fn: POST /api/player -> one team's match history
+index.html        login screen + app shell           (served at / )
+styles.css        Crucible-derived theme
+app.js            data caching, sorting, granular loading, detail view, CSV export
+serve.py          local dev server (mirrors the two functions; not deployed)
+vercel.json       Vercel config anchor
+install-mac.command / install-windows.bat   one-click local setup + desktop shortcut
 ```
 
 There's nothing to change when seasons roll over — `discover_seasons()` reads
@@ -89,12 +120,15 @@ bracket layout at fetch time.
 
 ## Privacy
 
-Your credentials are sent only to the local app (`127.0.0.1`) and used once to
-log in to the PAL site for the fetch. The server never writes them to disk.
-Checking **"Keep me signed in on this device"** stores them in your browser's
-`localStorage` (base64, so they're not needed retyped next launch); leave it
-unchecked and nothing is persisted. **Sign out** clears both the saved
-credentials and the cached data.
+Locally, your credentials go only to `127.0.0.1` and are used once to log in to
+the PAL site; nothing is written to disk. When deployed, they transit the host
+(e.g. Vercel) to reach the PAL site, again only for that login. After login the
+backend returns your PAL session cookie to the browser, which sends it back for
+each match-history request — it's your own session, held in the browser, never
+stored server-side. Checking **"Keep me signed in on this device"** stores your
+credentials in the browser's `localStorage` (base64) so you don't retype them;
+leave it unchecked and nothing persists. **Sign out** clears saved credentials
+and cached data.
 
 <br>
 

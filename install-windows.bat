@@ -49,7 +49,7 @@ set "LAUNCHER=%APP_DIR%\run-windows.bat"
 >> "%LAUNCHER%" echo cd /d "%APP_DIR%"
 >> "%LAUNCHER%" echo echo Starting PAL Data Sorter - a browser tab will open shortly.
 >> "%LAUNCHER%" echo echo Keep this window open while you use the app; close it to quit.
->> "%LAUNCHER%" echo %PYCMD% app.py --open
+>> "%LAUNCHER%" echo %PYCMD% serve.py --open
 
 REM --- drop a Desktop shortcut pointing at the launcher -----------------
 set "SHORTCUT=%USERPROFILE%\Desktop\PAL Data Sorter.lnk"
