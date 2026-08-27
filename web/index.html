@@ -73,7 +73,7 @@
     </div>
 
     <div class="container">
-      <div class="controls">
+      <div class="controls" id="controls">
         <div class="control-group">
           <span>League</span>
           <div class="segmented" id="leagueSeg" role="tablist"></div>
@@ -84,10 +84,16 @@
         </div>
         <div class="spacer"></div>
         <div class="control-group">
+          <span>Detail data</span>
+          <div id="granularWrap"></div>
+        </div>
+        <div class="control-group">
           <span>&nbsp;</span>
           <button class="btn btn-primary btn-sm" id="csvBtn">Export CSV</button>
         </div>
       </div>
+
+      <div class="detailbar hidden" id="detailBar"></div>
 
       <div class="stats" id="stats"></div>
 
@@ -98,7 +104,7 @@
             <tbody id="tbody"></tbody>
           </table>
         </div>
-        <div class="empty hidden" id="emptyState">No players in this selection.</div>
+        <div class="empty hidden" id="emptyState">Nothing to show.</div>
       </div>
     </div>
   </section>

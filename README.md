@@ -14,6 +14,11 @@ and re-sorting is instant and offline, with one-click **CSV export**.
   **Match Wins**, **Losses**, **Matches**, **Win %**, or player name.
 - A league with two brackets lets you view **A**, **B**, or **Both** (with a
   bracket badge); a single-bracket league just shows its table.
+- **Load granular data** (optional) pulls every player's match history behind a
+  progress bar. It adds sortable **Fargo** and **Avg Opp Fargo** columns and
+  makes each row clickable → a **detail view** of that player's opponents (date,
+  opponent, opponent Fargo, score, W/L), also sortable and CSV-exportable. If it
+  can't load, you get a normal message and the core standings are untouched.
 - Light/dark theme, styled after the Crucible design system.
 - No frameworks, no `pip install` — **Python standard library only**.
 
@@ -61,11 +66,18 @@ hands the browser the full dataset as JSON. From then on the front end (`web/`)
 does all filtering and sorting locally — no more live requests until you hit
 **Refresh**.
 
+Granular data is loaded on demand: the browser asks `/api/player` for each team
+(reusing the login session), the server parses that team's match-history page,
+and the front end computes the averages and renders the detail view — all
+locally cached, so it's fetched at most once per session.
+
 ```
 app.py            local web server + PAL scraper (stdlib only)
+                  /api/data   -> standings for all active leagues
+                  /api/player -> one team's match history (granular)
 web/index.html    login screen + app shell
 web/styles.css    Crucible-derived theme
-web/app.js        data caching, sorting, CSV export
+web/app.js        data caching, sorting, granular loading, detail view, CSV export
 install-mac.command / install-windows.bat   one-click setup + desktop shortcut
 ```
 
