@@ -970,6 +970,9 @@ const LEADERBOARDS = [
     val: (r) => r.GPMP, fmt: (v) => v.toFixed(2), ctx: (r) => `${r.GP} pts · ${r.MP} matches` },
   { key: "gamewin", title: "Game Win %", sub: "Games won on the table (spots removed)",
     val: (r) => r.gameWin, fmt: (v) => v.toFixed(1) + "%", ctx: (r) => `${r.MW}–${r.ML} matches` },
+  { key: "clutch", title: "Clutch", sub: "Record in deciding (7–6) games",
+    val: (r) => r.clutch, fmt: (v) => v.toFixed(0) + "%", tie: (r) => r.closeN,
+    ctx: (r) => `${r.closeW}–${r.closeL} in 7–6 games` },
   { key: "sos", title: "Toughest Schedule", sub: "Highest average opponent Fargo",
     val: (r) => r.avgOpp, fmt: (v) => Math.round(v), ctx: (r) => `${r.MP} matches played` },
 ];
@@ -986,12 +989,19 @@ function leaderboardRows() {
   return rows.map((r) => {
     const g = state.granular.byId[r.team_id] || {};
     const playedAs = playedAsFor(r.team_id);
-    let wg = 0, lg = 0;
-    (g.matches || []).forEach((m) => { if (m.oppFargo != null) { wg += m.my - (m.myBp || 0); lg += m.opp - (m.oppBp || 0); } });
+    let wg = 0, lg = 0, closeN = 0, closeW = 0;
+    (g.matches || []).forEach((m) => {
+      if (m.oppFargo != null) { wg += m.my - (m.myBp || 0); lg += m.opp - (m.oppBp || 0); }
+      if (Math.abs(m.my - m.opp) === 1 && Math.max(m.my, m.opp) === 7) {  // 7–6 decider
+        closeN++; if (m.my > m.opp) closeW++;
+      }
+    });
     return {
       ...r, fargo: g.fargo ?? null, avgOpp: g.avgOpp ?? null, playedAs,
       over: (playedAs != null && g.fargo != null) ? playedAs - g.fargo : null,
       gameWin: (wg + lg) > 0 ? (wg / (wg + lg)) * 100 : null,
+      closeN, closeW, closeL: closeN - closeW,
+      clutch: closeN >= 3 ? (closeW / closeN) * 100 : null,   // needs 3+ deciders
     };
   });
 }
@@ -1009,7 +1019,9 @@ function renderLeaderboard() {
   }
   const eligible = leaderboardRows().filter((r) => r.MP >= LB_MIN);
   const cards = LEADERBOARDS.map((lb) => {
-    const ranked = eligible.filter((r) => lb.val(r) != null).sort((a, b) => lb.val(b) - lb.val(a)).slice(0, LB_TOP);
+    const ranked = eligible.filter((r) => lb.val(r) != null)
+      .sort((a, b) => (lb.val(b) - lb.val(a)) || (lb.tie ? lb.tie(b) - lb.tie(a) : 0))
+      .slice(0, LB_TOP);
     const items = ranked.map((r, i) => {
       const rank = i < 3 ? `<span class="medal">${["🥇", "🥈", "🥉"][i]}</span>` : `<span class="lb-num">${i + 1}</span>`;
       return `<li class="lb-row">${rank}` +
