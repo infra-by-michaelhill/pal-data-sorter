@@ -27,8 +27,9 @@ const DETAIL_COLUMNS = [
   { key: "dateISO",  label: "Date",      type: "date" },
   { key: "opponent", label: "Opponent",  type: "text" },
   { key: "oppFargo", label: "Opp Fargo", type: "num" },
-  { key: "my",       label: "You",       type: "num" },
-  { key: "opp",      label: "Opp",       type: "num" },
+  { key: "score",    label: "Score",     type: "text", sortable: false },
+  { key: "spot",     label: "Spot",      type: "num" },
+  { key: "playedAs", label: "Played as", type: "num" },
   { key: "result",   label: "Result",    type: "text" },
 ];
 const DEFAULT_SORT = { key: "GP", dir: "desc" };
@@ -38,7 +39,8 @@ const state = {
   league: "standard", bracket: null, showBracketCol: false,
   sort: { ...DEFAULT_SORT },
   view: "standings",                    // "standings" | "player"
-  detail: null, detailSort: { key: "dateISO", dir: "asc" },
+  detail: null, detailTab: "insights",  // "insights" | "matches"
+  detailSort: { key: "dateISO", dir: "asc" },
   granular: { loaded: false, loading: false, byId: {}, done: 0, total: 0, errors: 0 },
 };
 
@@ -416,25 +418,85 @@ function renderStats() {
     `<div class="stat"><div class="k">${t.k}</div><div class="v">${t.v}</div></div>`).join("");
 }
 
-// ---- detail (opponents) view ---------------------------------------------
+// ==========================================================================
+// FargoRate math  (see the ⓘ popovers in the UI for the plain-English version)
+//
+//   p(win a game)      = 2^(Δ/100) / (1 + 2^(Δ/100)),  Δ = yourFargo − oppFargo
+//                        → a 100-pt edge = 2:1 games (66.7%); 200 = 4:1 (80%).
+//   played-as (1 match)= oppFargo + 100·log2(gamesWon / gamesLost)   [on-table]
+//   played-as (session)= the rating R where Σ expected game-wins = actual wins
+//                        (maximum-likelihood — the same method FargoRate uses).
+//
+// "On-table" games remove the spot: bonus points are games the lower-rated
+// player is given on the wire, so games actually won = official score − BP.
+// ==========================================================================
+const FARGO = {
+  pGame(r, ropp) { return 1 / (1 + Math.pow(2, -(r - ropp) / 100)); },
+  playedAsMatch(wg, lg, ropp) {
+    if (wg + lg === 0) return null;
+    let w = wg, l = lg;
+    if (l === 0) l = 0.5;          // continuity at a shutout, so it stays finite
+    if (w === 0) w = 0.5;
+    return Math.round(ropp + 100 * Math.log2(w / l));
+  },
+  playedAsSession(perMatch) {
+    const games = perMatch.filter((m) => m.ropp != null && (m.wg + m.lg) > 0);
+    const total = games.reduce((s, m) => s + m.wg + m.lg, 0);
+    const won = games.reduce((s, m) => s + m.wg, 0);
+    if (total === 0) return null;
+    if (won <= 0) return 200;                 // lost every on-table game (floor)
+    if (won >= total) return 900;             // won every on-table game (cap)
+    const expWins = (R) => games.reduce((s, m) => s + (m.wg + m.lg) * this.pGame(R, m.ropp), 0);
+    let lo = 200, hi = 900;
+    for (let i = 0; i < 60; i++) {            // binary search — expWins is monotonic in R
+      const mid = (lo + hi) / 2;
+      if (expWins(mid) < won) lo = mid; else hi = mid;
+    }
+    return Math.round((lo + hi) / 2);
+  },
+};
+
+// ---- detail (per-player) view --------------------------------------------
 function openDetail(row) {
   state.detail = { teamId: row.team_id, name: row.name };
+  state.detailTab = "insights";
   state.detailSort = { key: "dateISO", dir: "asc" };
   state.view = "player";
   renderAll();
 }
 function backToStandings() { state.view = "standings"; state.detail = null; renderAll(); }
 
-function detailMatches() {
+// enrich each match with on-table games, the spot, and the per-match played-as
+function enrichedMatches() {
   const g = state.granular.byId[state.detail.teamId];
-  const matches = g ? g.matches.slice() : [];
-  return sortRows(matches, state.detailSort, DETAIL_COLUMNS);
+  const fargo = g ? g.fargo : null;
+  return (g ? g.matches : []).map((m) => {
+    const wg = m.my - (m.myBp || 0);   // games YOU won on the table
+    const lg = m.opp - (m.oppBp || 0); // games OPP won on the table
+    const spotN = (m.myBp || 0) || (m.oppBp || 0);
+    const spotWho = (m.myBp || 0) ? "you" : (m.oppBp || 0) ? "opp" : null;
+    const playedAs = m.oppFargo != null ? FARGO.playedAsMatch(wg, lg, m.oppFargo) : null;
+    return { ...m, wg, lg, ropp: m.oppFargo, spotN, spotWho,
+             score: `${m.my}–${m.opp}`, playedAs, myFargo: fargo };
+  });
 }
 
 function detailCell(m, c, i) {
   if (c.key === "idx") return `<td class="rank">${i + 1}</td>`;
   if (c.key === "dateISO") return `<td class="text">${fmtDate(m.dateISO, m.date)}</td>`;
   if (c.key === "opponent") return `<td class="text name">${escapeHtml(m.opponent)}</td>`;
+  if (c.key === "score") return `<td class="text">${m.score}</td>`;
+  if (c.key === "spot") {
+    if (!m.spotN) return `<td class="spot-opp">—</td>`;
+    const cls = m.spotWho === "you" ? "spot-you" : "spot-opp";
+    return `<td class="${cls}">+${m.spotN} ${m.spotWho}</td>`;
+  }
+  if (c.key === "playedAs") {
+    if (m.playedAs == null) return `<td>—</td>`;
+    const d = m.myFargo != null ? m.playedAs - m.myFargo : 0;
+    const cls = d > 8 ? "up" : d < -8 ? "down" : "";
+    return `<td class="pa-cell ${cls}">${m.playedAs}</td>`;
+  }
   if (c.key === "result") {
     const w = m.result === "W";
     return `<td class="text"><span class="wl ${w ? "w" : "l"}">${m.result}</span></td>`;
@@ -453,17 +515,24 @@ function renderDetailBar() {
     `<span class="title">${escapeHtml(state.detail.name)}</span>` +
     `<div class="facts">` +
       `<span class="fact">Fargo <b>${g.fargo ?? "—"}</b></span>` +
-      `<span class="fact">Avg opp <b>${avgOpp(matches) ?? "—"}</b></span>` +
       `<span class="fact">Record <b>${wins}–${matches.length - wins}</b></span>` +
     `</div>` +
     `<span class="grow"></span>` +
+    `<div class="tabs" role="tablist">` +
+      `<button role="tab" aria-selected="${state.detailTab === "insights"}" data-tab="insights">Insights</button>` +
+      `<button role="tab" aria-selected="${state.detailTab === "matches"}" data-tab="matches">Matches</button>` +
+    `</div>` +
     `<button class="btn btn-primary btn-sm" id="detailCsvBtn">Export CSV</button>`;
   $("#backBtn").onclick = backToStandings;
   $("#detailCsvBtn").onclick = exportDetailCsv;
+  bar.querySelectorAll(".tabs button").forEach((b) => {
+    b.onclick = () => { state.detailTab = b.dataset.tab; renderAll(); };
+  });
 }
 
 function renderDetailTable() {
-  renderTable(DETAIL_COLUMNS, detailMatches(), {
+  const rows = sortRows(enrichedMatches(), state.detailSort, DETAIL_COLUMNS);
+  renderTable(DETAIL_COLUMNS, rows, {
     sortState: state.detailSort,
     onSort: (c) => {
       if (state.detailSort.key === c.key) state.detailSort.dir = state.detailSort.dir === "asc" ? "desc" : "asc";
@@ -474,17 +543,201 @@ function renderDetailTable() {
   });
 }
 
+// ---- Insights ------------------------------------------------------------
+function info(id, html) {
+  return `<span class="info"><button class="info-btn" data-info="${id}" aria-label="How this is calculated">i</button>` +
+    `<span class="info-pop hidden" id="info-${id}">${html}</span></span>`;
+}
+const SRC = `<span class="src">Model: FargoRate — 100 rating points ≈ winning twice as many games; ratings are the maximum-likelihood fit to games won &amp; lost.</span>`;
+
+function computeInsights() {
+  const g = state.granular.byId[state.detail.teamId] || { matches: [], fargo: null };
+  const official = g.fargo;
+  const all = enrichedMatches();
+  const rated = all.filter((m) => m.ropp != null && (m.wg + m.lg) > 0);
+  const perMatch = rated.map((m) => ({ ...m }));
+  const actualGames = rated.reduce((s, m) => s + m.wg, 0);
+  const totalGames = rated.reduce((s, m) => s + m.wg + m.lg, 0);
+  const expectedGames = official != null
+    ? rated.reduce((s, m) => s + (m.wg + m.lg) * FARGO.pGame(official, m.ropp), 0) : null;
+  const sessionPA = FARGO.playedAsSession(perMatch);
+  const delta = (sessionPA != null && official != null) ? sessionPA - official : null;
+  const excluded = all.length - rated.length;
+  // best / off night by played-as
+  const withPA = perMatch.filter((m) => m.playedAs != null);
+  let best = null, worst = null;
+  withPA.forEach((m) => {
+    if (!best || m.playedAs > best.playedAs) best = m;
+    if (!worst || m.playedAs < worst.playedAs) worst = m;
+  });
+  return { official, sessionPA, delta, actualGames, expectedGames, totalGames,
+           perMatch, rated, excluded, best, worst };
+}
+
+function renderInsights() {
+  const box = $("#insights");
+  const ins = computeInsights();
+  const { official, sessionPA, delta, actualGames, expectedGames, totalGames, excluded, best, worst } = ins;
+
+  if (!ins.rated.length || official == null) {
+    box.innerHTML = `<div class="panel"><p class="caption">Not enough rated matches yet to compute insights for this player.</p></div>`;
+    return;
+  }
+
+  const dir = delta > 8 ? "up" : delta < -8 ? "down" : "flat";
+  const sign = delta > 0 ? "+" : "";
+  const verdict = delta > 8 ? "Overperforming your rating"
+    : delta < -8 ? "Underperforming your rating" : "Right about on your rating";
+  const smallSample = totalGames < 20;
+
+  // expected vs actual bar scaling
+  const evaMax = Math.max(actualGames, expectedGames || 0) || 1;
+  const gDelta = expectedGames != null ? actualGames - expectedGames : null;
+  const gSign = gDelta > 0 ? "+" : "";
+
+  box.innerHTML =
+    `<div class="insights-grid">` +
+      // Hero verdict
+      `<div class="panel">` +
+        `<p class="panel-title">Played-as rating · this session ${info("pa",
+          `<b>Played-as rating</b> is the FargoRate that best explains the games you actually won this session — the rating where your expected game-wins equal your real ones. Spots (bonus points) are removed first. ${SRC}`)}</p>` +
+        `<div class="hero-num"><span class="big">${sessionPA}</span>` +
+          `<span class="delta ${dir}">${sign}${delta}</span></div>` +
+        `<p class="verdict ${dir}">${verdict}</p>` +
+        `<p class="hero-sub">Your official Fargo is <b>${official}</b>. This session you've played like a <b>${sessionPA}</b>` +
+          `${smallSample ? " — but it's early, so treat this as a rough read." : "."}</p>` +
+      `</div>` +
+      // Expected vs actual
+      `<div class="panel">` +
+        `<p class="panel-title">Games won vs. expected ${info("eva",
+          `<b>Expected</b> adds up your win chance in every game from the Fargo gap with each opponent. <b>Actual</b> is games you truly won on the table (spots removed). Ahead of expected = you're outplaying the ratings. ${SRC}`)}</p>` +
+        `<div class="eva-row"><div class="lab"><span>Actual</span><b>${actualGames}</b></div>` +
+          `<div class="eva-track"><div class="eva-fill actual" style="width:${(actualGames / evaMax * 100).toFixed(1)}%"></div></div></div>` +
+        `<div class="eva-row"><div class="lab"><span>Expected</span><b>${expectedGames != null ? expectedGames.toFixed(1) : "—"}</b></div>` +
+          `<div class="eva-track"><div class="eva-fill expected" style="width:${((expectedGames || 0) / evaMax * 100).toFixed(1)}%"></div></div></div>` +
+        (gDelta != null
+          ? `<p class="caption">You've won <b style="color:hsl(var(--${gDelta >= 0 ? "success" : "danger"}))">${gSign}${gDelta.toFixed(1)}</b> games ${gDelta >= 0 ? "more" : "fewer"} than your rating predicts, over ${totalGames} on-table games.</p>`
+          : "") +
+      `</div>` +
+    `</div>` +
+    // Chart
+    `<div class="chart-card">` +
+      `<div class="chart-head"><h3>How you've played, match by match</h3>` +
+        info("chart", `Each dot is one match: the rating you'd need to have played to produce that result (spot removed), from your on-table games and the opponent's Fargo. The dashed line is your official Fargo — dots above it mean you outplayed your rating that night. ${SRC}`) +
+      `</div>` +
+      `<p class="caption" style="margin-top:0">Above the dashed line = you played better than your ${official} rating.</p>` +
+      `<div class="chart-wrap" id="paChartWrap"></div>` +
+    `</div>` +
+    // Highlights
+    `<div class="highlights">` +
+      (best ? `<div class="hl best"><div class="k">Best performance</div>` +
+        `<div class="v">Played like ${best.playedAs}</div>` +
+        `<div class="d">vs ${escapeHtml(best.opponent)} (${best.ropp}) · on-table ${best.wg}–${best.lg} · ${best.result}</div></div>` : "") +
+      (worst ? `<div class="hl worst"><div class="k">Off night</div>` +
+        `<div class="v">Played like ${worst.playedAs}</div>` +
+        `<div class="d">vs ${escapeHtml(worst.opponent)} (${worst.ropp}) · on-table ${worst.wg}–${worst.lg} · ${worst.result}</div></div>` : "") +
+    `</div>` +
+    (excluded ? `<p class="caption">${excluded} match${excluded > 1 ? "es" : ""} excluded (opponent unrated).</p>` : "");
+
+  renderPlayedAsChart($("#paChartWrap"), ins);
+  wireInfoButtons(box);
+}
+
+function renderPlayedAsChart(wrap, ins) {
+  const data = ins.perMatch
+    .filter((m) => m.playedAs != null)
+    .slice()
+    .sort((a, b) => String(a.dateISO || "").localeCompare(String(b.dateISO || "")));
+  if (!data.length) { wrap.innerHTML = `<p class="caption">No rated matches to plot.</p>`; return; }
+
+  const W = 720, H = 260, mL = 44, mR = 16, mT = 14, mB = 26;
+  const iw = W - mL - mR, ih = H - mT - mB;
+  const ys = data.map((d) => d.playedAs).concat([ins.official]);
+  let yMin = Math.min(...ys), yMax = Math.max(...ys);
+  const pad = Math.max(30, (yMax - yMin) * 0.15);
+  yMin = Math.floor((yMin - pad) / 10) * 10; yMax = Math.ceil((yMax + pad) / 10) * 10;
+  const x = (i) => mL + (data.length === 1 ? iw / 2 : (i / (data.length - 1)) * iw);
+  const y = (v) => mT + ih - ((v - yMin) / (yMax - yMin)) * ih;
+
+  // gridlines / y ticks (4)
+  let grid = "";
+  const ticks = 4;
+  for (let t = 0; t <= ticks; t++) {
+    const val = Math.round(yMin + (t / ticks) * (yMax - yMin));
+    const yy = y(val);
+    grid += `<line class="grid-line" x1="${mL}" y1="${yy.toFixed(1)}" x2="${W - mR}" y2="${yy.toFixed(1)}"/>`;
+    grid += `<text class="axis-text" x="${mL - 8}" y="${(yy + 4).toFixed(1)}" text-anchor="end">${val}</text>`;
+  }
+  // reference line at official fargo
+  const refY = y(ins.official);
+  const refLine = `<line class="ref-line" x1="${mL}" y1="${refY.toFixed(1)}" x2="${W - mR}" y2="${refY.toFixed(1)}"/>` +
+    `<text class="ref-label" x="${W - mR}" y="${(refY - 6).toFixed(1)}" text-anchor="end">Your Fargo ${ins.official}</text>`;
+  // line path
+  const path = data.map((d, i) => `${i ? "L" : "M"}${x(i).toFixed(1)},${y(d.playedAs).toFixed(1)}`).join(" ");
+  // date labels: first & last
+  const dl = (d) => d.dateISO ? new Date(d.dateISO).toLocaleDateString([], { month: "short", day: "numeric" }) : "";
+  const xLabels =
+    `<text class="axis-text" x="${x(0)}" y="${H - 6}" text-anchor="start">${dl(data[0])}</text>` +
+    (data.length > 1 ? `<text class="axis-text" x="${x(data.length - 1)}" y="${H - 6}" text-anchor="end">${dl(data[data.length - 1])}</text>` : "");
+  const dots = data.map((d, i) =>
+    `<circle class="pa-dot" cx="${x(i).toFixed(1)}" cy="${y(d.playedAs).toFixed(1)}" r="4.5"/>` +
+    `<circle cx="${x(i).toFixed(1)}" cy="${y(d.playedAs).toFixed(1)}" r="14" fill="transparent" ` +
+      `data-i="${i}" class="pa-hit"/>`).join("");
+
+  wrap.innerHTML =
+    `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Played-as rating by match">` +
+      grid + refLine + `<path class="pa-line" d="${path}"/>` + dots + xLabels +
+    `</svg><div class="chart-tip" id="paTip"></div>`;
+
+  const svg = wrap.querySelector("svg");
+  const tip = wrap.querySelector("#paTip");
+  wrap.querySelectorAll(".pa-hit").forEach((h) => {
+    h.addEventListener("mouseenter", () => {
+      const d = data[+h.dataset.i];
+      const rect = svg.getBoundingClientRect();
+      const sx = rect.left + (x(+h.dataset.i) / W) * rect.width;
+      const sy = rect.top + (y(d.playedAs) / H) * rect.height;
+      const wr = wrap.getBoundingClientRect();
+      tip.innerHTML = `<b>Played like ${d.playedAs}</b><br>vs ${escapeHtml(d.opponent)} (${d.ropp})<br>` +
+        `on-table ${d.wg}–${d.lg} · ${d.result}${d.spotN ? ` · +${d.spotN} ${d.spotWho}` : ""}`;
+      tip.style.left = (sx - wr.left) + "px";
+      tip.style.top = (sy - wr.top) + "px";
+      tip.style.opacity = "1";
+    });
+    h.addEventListener("mouseleave", () => { tip.style.opacity = "0"; });
+  });
+}
+
+function wireInfoButtons(scope) {
+  scope.querySelectorAll(".info-btn").forEach((b) => {
+    b.onclick = (e) => {
+      e.stopPropagation();
+      const pop = scope.querySelector("#info-" + b.dataset.info);
+      const open = !pop.classList.contains("hidden");
+      scope.querySelectorAll(".info-pop").forEach((p) => p.classList.add("hidden"));
+      if (!open) pop.classList.remove("hidden");
+    };
+  });
+}
+document.addEventListener("click", (e) => {
+  if (!e.target.closest(".info")) document.querySelectorAll(".info-pop").forEach((p) => p.classList.add("hidden"));
+});
+
 // ---- view switch ---------------------------------------------------------
 function renderAll() {
   const standings = state.view === "standings";
+  const insights = !standings && state.detailTab === "insights";
   $("#controls").classList.toggle("hidden", !standings);
   $("#stats").classList.toggle("hidden", !standings);
   $("#detailBar").classList.toggle("hidden", standings);
+  $("#tableCard").classList.toggle("hidden", insights);
+  $("#insights").classList.toggle("hidden", !insights);
   if (standings) {
     renderLeagueSeg(); renderBracketSeg(); renderGranularControl();
     renderStats(); renderStandingsTable();
   } else {
-    renderDetailBar(); renderDetailTable();
+    renderDetailBar();
+    if (insights) renderInsights(); else renderDetailTable();
   }
 }
 
@@ -517,12 +770,14 @@ $("#csvBtn").addEventListener("click", () => {
 });
 
 function exportDetailCsv() {
-  const matches = detailMatches();
-  const header = ["date", "opponent", "opp_fargo", "you", "opp", "result"];
+  const matches = sortRows(enrichedMatches(), state.detailSort, DETAIL_COLUMNS);
+  const header = ["date", "opponent", "opp_fargo", "you", "opp",
+    "bonus_points", "bp_to", "ontable_you", "ontable_opp", "played_as", "result"];
   const lines = [header.join(",")];
   matches.forEach((m) => lines.push([
     csvCell(m.date || m.dateISO || ""), csvCell(m.opponent), csvCell(m.oppFargo),
-    csvCell(m.my), csvCell(m.opp), csvCell(m.result),
+    csvCell(m.my), csvCell(m.opp), csvCell(m.spotN || 0), csvCell(m.spotWho || ""),
+    csvCell(m.wg), csvCell(m.lg), csvCell(m.playedAs), csvCell(m.result),
   ].join(",")));
   download(`pal_${slug(state.detail.name)}_matches.csv`, lines.join("\n"));
 }

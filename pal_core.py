@@ -229,10 +229,13 @@ def parse_matches(html, subject_name):
 
         if lname.upper() == subj:
             opp_name, opp_f, my, opp, my_f = rname, rf, lscore, rscore, lf
+            my_bp, opp_bp = lbp or 0, rbp or 0
         elif rname.upper() == subj:
             opp_name, opp_f, my, opp, my_f = lname, lf, rscore, lscore, rf
+            my_bp, opp_bp = rbp or 0, lbp or 0
         else:
             opp_name, opp_f, my, opp, my_f = rname, rf, lscore, rscore, lf
+            my_bp, opp_bp = lbp or 0, rbp or 0
 
         if subj_fargo is None and my_f is not None:
             subj_fargo = my_f
@@ -242,6 +245,10 @@ def parse_matches(html, subject_name):
             "opponent": opp_name,
             "oppFargo": opp_f,
             "my": my, "opp": opp,
+            # bonus points = games spotted on the wire to the LOWER-rated player;
+            # they're included in the official score above, so games actually won
+            # on the table = score - bp on that side.
+            "myBp": my_bp, "oppBp": opp_bp,
             "result": "W" if my > opp else "L",
         })
     return {"fargo": subj_fargo, "matches": matches}

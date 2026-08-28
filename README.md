@@ -16,10 +16,17 @@ and re-sorting is instant and offline, with one-click **CSV export**.
 - A league with two brackets lets you view **A**, **B**, or **Both** (with a
   bracket badge); a single-bracket league just shows its table.
 - **Load granular data** (optional) pulls every player's match history behind a
-  progress bar. It adds sortable **Fargo** and **Avg Opp Fargo** columns and
-  makes each row clickable → a **detail view** of that player's opponents (date,
-  opponent, opponent Fargo, score, W/L), also sortable and CSV-exportable. If it
-  can't load, you get a normal message and the core standings are untouched.
+  progress bar, adds sortable **Fargo** and **Avg Opp Fargo** columns, and makes
+  each row clickable → a **player page** with two tabs:
+  - **Matches** — every match with the official score, the **spot** (bonus
+    points), the rating you **played as** that match, and W/L; all sortable and
+    CSV-exportable.
+  - **Insights** — a **played-as rating for the session** (with a plain-English
+    over/under verdict), **games won vs. Fargo-expected**, a **played-as
+    line chart** vs your rating, and best-night / off-night highlights. Every
+    number has an **ⓘ** explaining how it's derived.
+
+  If it can't load, you get a normal message and the core standings are untouched.
 - Light/dark theme, styled after the Crucible design system.
 - No frameworks, no `pip install` — **Python standard library only**.
 
@@ -115,6 +122,31 @@ install-mac.command / install-windows.bat   one-click local setup + desktop shor
 There's nothing to change when seasons roll over — `discover_seasons()` reads
 the site's active-seasons list and `parse_brackets()` detects each season's
 bracket layout at fetch time.
+
+<br>
+
+## The Fargo insights — how they're derived
+
+Nothing is made up; it's the published [FargoRate](https://fargorate.com/) model
+(a 100-point rating gap ≈ winning **twice** as many games; ratings are the
+maximum-likelihood fit to games won and lost).
+
+- **Spots removed first.** Bonus points (BP) are games the lower-rated player is
+  given on the wire, so games *actually won on the table* = official score − BP.
+  All the math below uses on-table games.
+- **Win chance per game:** `p = 2^(Δ/100) / (1 + 2^(Δ/100))`, where `Δ` is the
+  Fargo gap. (Δ=100 → 66.7%, Δ=200 → 80%, Δ=0 → 50%.)
+- **Played-as (one match):** `oppFargo + 100 · log₂(gamesWon / gamesLost)` — the
+  rating that would produce that result against that opponent.
+- **Played-as (session):** the rating where your **expected** game-wins equal
+  your **actual** game-wins across the session — the same maximum-likelihood
+  method FargoRate uses to compute ratings.
+- **Expected games won:** your per-game win chance vs each opponent, summed.
+
+These are single-player *performance estimates* from this league's games, not
+official FargoRate ratings. Sources:
+[FargoRate](https://fargorate.com/) ·
+[Dr. Dave: FargoRate explained](https://drdavepoolinfo.com/faq/rating/fargorate/).
 
 <br>
 
