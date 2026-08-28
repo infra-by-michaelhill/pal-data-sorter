@@ -243,18 +243,34 @@ function relAge(iso) {
 
 
 // ---- sidebar navigation --------------------------------------------------
+const ICON_BUILDING = '<svg class="scope-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="18" rx="1.5"/><path d="M9 21v-4h6v4"/><path d="M9 7h.01M15 7h.01M9 11h.01M15 11h.01"/></svg>';
+const ICON_CHEV = '<svg class="scope-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>';
+const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
+
 function renderSidebar() {
-  // division selector
-  const sel = $("#divisionSelect");
-  if (sel) {
-    sel.innerHTML = state.data.order.map((key) =>
-      `<option value="${key}"${key === state.league ? " selected" : ""}>${escapeHtml(state.data.leagues[key].name)}</option>`).join("");
-    sel.onchange = (e) => {
-      state.league = e.target.value;
-      pickDefaultBracket();
-      state.h2h.a = null; state.h2h.b = null;
-      renderAll();
-    };
+  // division switcher (crucible scope-switcher style)
+  const sw = $("#divisionSwitch");
+  if (sw) {
+    const name = state.data.leagues[state.league] ? state.data.leagues[state.league].name : "—";
+    sw.innerHTML =
+      `<button class="scope-btn" id="divisionBtn" aria-haspopup="listbox" aria-expanded="false" title="Division: ${escapeHtml(name)}">` +
+        ICON_BUILDING +
+        `<span class="scope-text"><span class="scope-cap">Division</span><span class="scope-name">${escapeHtml(name)}</span></span>` +
+        ICON_CHEV +
+      `</button>` +
+      `<div class="scope-menu hidden" id="divisionMenu" role="listbox">` +
+        state.data.order.map((k) =>
+          `<button class="scope-opt" role="option" data-league="${k}">` +
+          `<span class="check${k === state.league ? "" : " hidden-check"}">${ICON_CHECK}</span>` +
+          `<span>${escapeHtml(state.data.leagues[k].name)}</span></button>`).join("") +
+      `</div>`;
+    const menu = $("#divisionMenu");
+    $("#divisionBtn").onclick = (e) => { e.stopPropagation(); menu.classList.toggle("hidden"); };
+    menu.querySelectorAll(".scope-opt").forEach((o) => o.onclick = () => {
+      menu.classList.add("hidden");
+      const k = o.dataset.league;
+      if (k !== state.league) { state.league = k; pickDefaultBracket(); state.h2h.a = null; state.h2h.b = null; renderAll(); }
+    });
   }
   // nav items
   document.querySelectorAll("#sidebarNav .nav-item").forEach((b) => {
@@ -266,6 +282,9 @@ function renderSidebar() {
   const cb = $("#collapseBtn");
   if (cb) cb.onclick = () => { state.collapsed = !state.collapsed; store.saveCollapsed(state.collapsed); $("#app").classList.toggle("collapsed", state.collapsed); };
 }
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#divisionSwitch")) { const m = $("#divisionMenu"); if (m) m.classList.add("hidden"); }
+});
 
 function renderBracketSeg() {
   const labels = bracketsFor(state.league);
