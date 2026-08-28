@@ -267,12 +267,13 @@ body {
   border-radius: 6px; cursor: pointer; white-space: nowrap;
   transition: background .15s ease, color .15s ease;
 }
-.segmented button:hover, .tabs button:hover { background: hsl(var(--fg) / 0.06); color: hsl(var(--fg)); }
+.segmented button:hover, .tabs button:hover { background: hsl(var(--fg) / 0.07); color: hsl(var(--fg)); }
 .segmented button[aria-selected="true"], .tabs button[aria-selected="true"] {
-  background: hsl(var(--accent) / 0.15); color: hsl(var(--accent)); font-weight: 700;
+  background: hsl(var(--accent)); color: hsl(var(--accent-fg)); font-weight: 650;
+  box-shadow: 0 1px 3px hsl(var(--accent) / 0.35);
 }
 .segmented button[aria-selected="true"]:hover, .tabs button[aria-selected="true"]:hover {
-  background: hsl(var(--accent) / 0.2);
+  background: hsl(var(--accent-strong)); color: hsl(var(--accent-fg));
 }
 
 .spacer { flex: 1; }
