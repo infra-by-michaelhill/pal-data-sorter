@@ -540,6 +540,14 @@ tbody tr.row-click:hover td.name .disclosure { opacity: 1; }
 .lb-empty { padding: 10px 4px; color: hsl(var(--subtle)); font-size: 0.85rem; }
 
 /* ---- Schedule (weekly match slate) ---------------------------------- */
+.sch-searchwrap { position: relative; margin: 2px 0 14px; }
+.sch-search-ic { position: absolute; left: 12px; top: 50%; transform: translateY(-50%);
+                 width: 16px; height: 16px; color: hsl(var(--muted)); pointer-events: none; }
+.sch-search { width: 100%; box-sizing: border-box; height: 38px; padding: 0 12px 0 36px;
+              border: 1px solid hsl(var(--border)); border-radius: var(--radius);
+              background: hsl(var(--surface)); color: hsl(var(--fg)); font: inherit; font-size: 0.92rem; }
+.sch-search::placeholder { color: hsl(var(--subtle)); }
+.sch-search:focus { outline: none; border-color: hsl(var(--accent)); box-shadow: 0 0 0 3px hsl(var(--accent) / 0.15); }
 .sch-nav { display: flex; align-items: center; gap: 10px; margin: 2px 0 18px; }
 .sch-arrow { min-width: 40px; font-size: 1.15rem; line-height: 1; padding: 5px 10px; }
 .sch-week { flex: 1; text-align: center; display: flex; flex-direction: column; gap: 1px; }

@@ -45,7 +45,7 @@ const state = {
   hiddenCols: new Set(),   // column keys the user chose to hide
   mode: "standings",       // "standings" | "schedule" | "h2h" | "leaderboard"
   h2h: { a: null, b: null, basis: "fargo" },  // basis: "fargo" | "form"; league = global state.league
-  schedule: { weekStart: null },   // ms of the Monday of the shown week (null = default to live edge)
+  schedule: { weekStart: null, q: "" },   // ms of the shown week (null = live edge); q = name filter
   collapsed: false,
 };
 
@@ -214,7 +214,7 @@ function onData(snap, opts = {}) {
   store.cacheData(snap);
   const hasData = state.data.order.length > 0;
   if (!opts.keepView || !state.league) {
-    state.league = hasData ? (state.data.order[0]) : null;
+    state.league = hasData ? defaultLeague() : null;
     state.sort = { ...DEFAULT_SORT };
     state.view = "standings"; state.detail = null;
     if (state.league) pickDefaultBracket();
@@ -231,6 +231,19 @@ function updateFreshness() {
 function showTopProgress(on) { $("#topProgress").classList.toggle("hidden", !on); }
 
 function bracketsFor(league) { return Object.keys(state.data.leagues[league].brackets).sort(); }
+// a league is "doubles" if most of its team names are two members joined by "/"
+function isDoublesLeague(key) {
+  const bks = state.data.leagues[key].brackets;
+  const names = [];
+  Object.keys(bks).forEach((l) => bks[l].forEach((r) => names.push(r.name)));
+  if (!names.length) return false;
+  return names.filter((n) => n.includes("/")).length > names.length / 2;
+}
+// default the division to singles (fall back to the first league if all are doubles)
+function defaultLeague() {
+  const order = state.data.order;
+  return order.find((k) => !isDoublesLeague(k)) || order[0] || null;
+}
 function pickDefaultBracket() {
   const labels = bracketsFor(state.league);
   state.bracket = labels.length > 1 ? "__both__" : labels[0];
@@ -271,7 +284,12 @@ function renderScope(container) {
   menu.querySelectorAll(".scope-opt").forEach((o) => o.onclick = () => {
     menu.classList.add("hidden");
     const k = o.dataset.league;
-    if (k !== state.league) { state.league = k; pickDefaultBracket(); state.h2h.a = null; state.h2h.b = null; renderAll(); }
+    if (k !== state.league) {
+      state.league = k; pickDefaultBracket();
+      state.h2h.a = null; state.h2h.b = null;
+      state.schedule.weekStart = null; state.schedule.q = "";
+      renderAll();
+    }
   });
 }
 
@@ -1068,12 +1086,17 @@ function wireSchBracket(box) {
   });
 }
 
+// fuzzy: every typed term must appear in one player's name (first or last), on either side
+function schMatchesQuery(m, terms) {
+  const hit = (name) => { const n = String(name).toLowerCase(); return terms.every((t) => n.includes(t)); };
+  return hit(m.aName) || hit(m.bName);
+}
+
+// The shell (bracket toggle + search box) is rendered once so the search input
+// keeps focus; only the body re-renders as you type or page between weeks.
 function renderSchedule() {
   const box = $("#schedule");
-  const league = state.league;
-  const labels = bracketsFor(league);
-  const all = scheduleFor(league, state.bracket);
-  const weeks = scheduleWeeks(all);
+  const labels = bracketsFor(state.league);
 
   let bracketBar = "";
   if (labels.length > 1) {
@@ -1084,21 +1107,53 @@ function renderSchedule() {
       `</div></div></div>`;
   }
 
+  const searchIc = '<svg class="sch-search-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>';
+  const search = `<div class="sch-searchwrap">${searchIc}` +
+    `<input type="search" id="schSearch" class="sch-search" placeholder="Search by player name…" autocomplete="off" value="${escapeHtml(state.schedule.q || "")}">` +
+    `</div>`;
+
+  box.innerHTML = bracketBar + search + `<div id="schBody"></div>`;
+  wireSchBracket(box);
+  const inp = $("#schSearch");
+  if (inp) inp.oninput = () => { state.schedule.q = inp.value; renderScheduleBody(); };
+  renderScheduleBody();
+}
+
+function renderScheduleBody() {
+  const body = $("#schBody");
+  const league = state.league;
+  const all = scheduleFor(league, state.bracket);
   if (!all.length) {
-    box.innerHTML = bracketBar + `<div class="panel"><p class="caption">No schedule has been posted for this division yet.</p></div>`;
-    wireSchBracket(box); return;
+    body.innerHTML = `<div class="panel"><p class="caption">No schedule has been posted for this division yet.</p></div>`;
+    return;
   }
 
-  let wk = state.schedule.weekStart;
-  if (wk == null || !weeks.includes(wk)) wk = defaultWeek(all, weeks);
-  state.schedule.weekStart = wk;
-  const idx = weeks.indexOf(wk);
+  const terms = (state.schedule.q || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const searching = terms.length > 0;
 
-  const start = new Date(wk), end = new Date(wk + 6 * DAY_MS);
-  const fmtD = (d) => d.toLocaleDateString([], { month: "short", day: "numeric" });
+  let shown, nav = "", weeks = [], idx = -1;
+  if (searching) {
+    shown = all.filter((m) => schMatchesQuery(m, terms));   // across all weeks
+  } else {
+    weeks = scheduleWeeks(all);
+    let wk = state.schedule.weekStart;
+    if (wk == null || !weeks.includes(wk)) wk = defaultWeek(all, weeks);
+    state.schedule.weekStart = wk;
+    idx = weeks.indexOf(wk);
+    const start = new Date(wk), end = new Date(wk + 6 * DAY_MS);
+    const fmtD = (d) => d.toLocaleDateString([], { month: "short", day: "numeric" });
+    nav = `<div class="sch-nav">` +
+        `<button class="btn btn-secondary btn-sm sch-arrow" id="schPrev"${idx <= 0 ? " disabled" : ""} aria-label="Previous week">‹</button>` +
+        `<div class="sch-week"><span class="sch-week-label">${fmtD(start)} – ${fmtD(end)}</span>` +
+          `<span class="sch-week-sub">Week ${idx + 1} of ${weeks.length}</span></div>` +
+        `<button class="btn btn-secondary btn-sm sch-arrow" id="schNext"${idx >= weeks.length - 1 ? " disabled" : ""} aria-label="Next week">›</button>` +
+        `<button class="btn btn-ghost btn-sm" id="schLive" title="Jump to the latest week">Now</button>` +
+      `</div>`;
+    shown = all.filter((m) => weekStartOf(m.ts) === wk);
+  }
 
   const byDay = new Map();
-  all.filter((m) => weekStartOf(m.ts) === wk).forEach((m) => {
+  shown.forEach((m) => {
     const d = new Date(m.ts); d.setHours(0, 0, 0, 0);
     const k = d.getTime();
     (byDay.get(k) || byDay.set(k, []).get(k)).push(m);
@@ -1108,21 +1163,17 @@ function renderSchedule() {
     return `<div class="sch-day"><div class="sch-day-h">${dh}</div>${byDay.get(k).map(schMatchHTML).join("")}</div>`;
   }).join("");
 
-  const nav = `<div class="sch-nav">` +
-      `<button class="btn btn-secondary btn-sm sch-arrow" id="schPrev"${idx <= 0 ? " disabled" : ""} aria-label="Previous week">‹</button>` +
-      `<div class="sch-week"><span class="sch-week-label">${fmtD(start)} – ${fmtD(end)}</span>` +
-        `<span class="sch-week-sub">Week ${idx + 1} of ${weeks.length}</span></div>` +
-      `<button class="btn btn-secondary btn-sm sch-arrow" id="schNext"${idx >= weeks.length - 1 ? " disabled" : ""} aria-label="Next week">›</button>` +
-      `<button class="btn btn-ghost btn-sm" id="schLive" title="Jump to the latest week">Now</button>` +
-    `</div>`;
+  const empty = searching
+    ? `<div class="panel"><p class="caption">No matches for “${escapeHtml((state.schedule.q || "").trim())}”.</p></div>`
+    : `<div class="panel"><p class="caption">No matches this week.</p></div>`;
+  body.innerHTML = nav + `<div class="sch-list">${days || empty}</div>`;
 
-  box.innerHTML = bracketBar + nav + `<div class="sch-list">${days}</div>`;
-
-  wireSchBracket(box);
-  if ($("#schPrev")) $("#schPrev").onclick = () => { if (idx > 0) { state.schedule.weekStart = weeks[idx - 1]; renderSchedule(); } };
-  if ($("#schNext")) $("#schNext").onclick = () => { if (idx < weeks.length - 1) { state.schedule.weekStart = weeks[idx + 1]; renderSchedule(); } };
-  if ($("#schLive")) $("#schLive").onclick = () => { state.schedule.weekStart = null; renderSchedule(); };
-  box.querySelectorAll(".sch-card.clickable").forEach((c) => {
+  if (!searching) {
+    if ($("#schPrev")) $("#schPrev").onclick = () => { if (idx > 0) { state.schedule.weekStart = weeks[idx - 1]; renderScheduleBody(); } };
+    if ($("#schNext")) $("#schNext").onclick = () => { if (idx < weeks.length - 1) { state.schedule.weekStart = weeks[idx + 1]; renderScheduleBody(); } };
+    if ($("#schLive")) $("#schLive").onclick = () => { state.schedule.weekStart = null; renderScheduleBody(); };
+  }
+  body.querySelectorAll(".sch-card.clickable").forEach((c) => {
     const fire = () => openH2H(+c.dataset.a, +c.dataset.b, league);
     c.onclick = fire;
     c.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fire(); } };
