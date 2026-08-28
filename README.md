@@ -59,21 +59,21 @@ it; press `Ctrl+C` to stop.
 
 ## Deploy free to Vercel
 
-The app is structured as a static frontend plus two Python serverless functions,
-so it drops onto Vercel's free (Hobby) tier — the static page is always instant
-(CDN) and the functions cold-start in ~1–2s.
+The app runs as a single Python function (declared in `vercel.json`) that serves
+both the static frontend and the API, so it drops onto Vercel's free (Hobby)
+tier and functions cold-start in ~1–2s.
 
 1. Push this repo to GitHub (already done if you cloned it from there).
 2. At [vercel.com/new](https://vercel.com/new), **Import** the repo.
-3. Framework preset: **Other** (leave build/output settings empty). No
-   environment variables are needed.
+3. Leave every setting at its default — `vercel.json` supplies the build/route
+   config. No environment variables are needed.
 4. **Deploy.** You'll get a URL like `https://pal-data-sorter.vercel.app`.
 
 Or from the CLI: `npm i -g vercel && vercel` in this folder.
 
-Nothing to configure — Vercel serves the root files statically and turns
-`api/data.py` and `api/player.py` into functions automatically. Each new push to
-`main` redeploys.
+`vercel.json` builds `index.py` with the Python runtime and routes every request
+to it; the handler serves the bundled static files and the `/api/*` endpoints.
+Each new push to `main` redeploys.
 
 > **Heads-up on hosting:** once it's on a public URL, anyone with the link who
 > has a valid PAL account can use it, and their credentials transit Vercel's
@@ -97,18 +97,18 @@ Granular data is loaded on demand: the browser asks `/api/player` for each team
 match-history page, and the front end computes the averages and renders the
 detail view — locally cached, so it's fetched at most once per session.
 
-The scraping core lives in `api/_pal.py` and is shared by both the local dev
-server and the Vercel functions, so local and hosted behave identically.
+One request handler (`index.py`) serves both the static frontend and the API,
+and the scraping core (`pal_core.py`) is shared, so local and hosted behave
+identically — `serve.py` just runs that same handler locally.
 
 ```
-api/_pal.py       shared PAL scraper (stdlib only) — not a route (leading _)
-api/data.py       serverless fn: POST /api/data   -> standings for all leagues + cookie
-api/player.py     serverless fn: POST /api/player -> one team's match history
+index.py          the one entrypoint: handler serving static (GET) + /api (POST)
+pal_core.py       shared PAL scraper (stdlib only): login, standings, matches
 index.html        login screen + app shell           (served at / )
 styles.css        Crucible-derived theme
 app.js            data caching, sorting, granular loading, detail view, CSV export
-serve.py          local dev server (mirrors the two functions; not deployed)
-vercel.json       Vercel config anchor
+serve.py          local dev server (imports index.py's handler; not deployed)
+vercel.json       build + route config (Python runtime, catch-all to index.py)
 install-mac.command / install-windows.bat   one-click local setup + desktop shortcut
 ```
 
