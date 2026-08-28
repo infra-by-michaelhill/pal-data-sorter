@@ -576,11 +576,28 @@ tbody tr.row-click:hover td.name .disclosure { opacity: 1; }
 
   /* standings: curated columns + denser text */
   .col-MW, .col-ML, .col-MP, .col-avgOpp { display: none; }
-  thead th { padding: 8px 9px; font-size: 0.66rem; }
+  thead th { padding: 8px 9px; font-size: 0.66rem; z-index: 3; }
   tbody td { padding: 8px 9px; font-size: 0.84rem; }
   .controls { gap: 12px 12px; }
   .controls .spacer { display: none; }               /* let Export CSV wrap, not shove off-screen */
   #colMenuWrap, .controls .control-group:has(#colMenuWrap) { display: none; }
+
+  /* Freeze # + Player as a left anchor so the name stays put while stats scroll */
+  td.col-rank, th.col-rank, td.col-name, th.col-name { position: sticky; }
+  td.col-rank, th.col-rank { left: 0; box-sizing: border-box; width: 40px; min-width: 40px; }
+  td.col-name, th.col-name { left: 40px; }
+  tbody td.col-rank, tbody td.col-name { z-index: 2; }
+  thead th.col-rank, thead th.col-name { z-index: 5; }
+  /* opaque backgrounds (solid zebra on mobile) so scrolling cells can't bleed through */
+  tbody tr:nth-child(even) { background: hsl(var(--surface-2)); }
+  tbody tr:nth-child(odd) td.col-rank, tbody tr:nth-child(odd) td.col-name { background: hsl(var(--surface)); }
+  tbody tr:nth-child(even) td.col-rank, tbody tr:nth-child(even) td.col-name { background: hsl(var(--surface-2)); }
+  thead th.col-rank, thead th.col-name { background: hsl(var(--surface-2)); }
+  /* freeze line: hairline + soft shadow on the right edge of Player */
+  td.col-name, th.col-name { box-shadow: inset -1px 0 0 hsl(var(--border)), 7px 0 8px -7px hsl(var(--fg) / 0.22); }
+  /* fixed Player width so scrolling stats keep room; long doubles names wrap at spaces */
+  td.col-name, th.col-name { width: 150px; min-width: 130px; }
+  td.col-name { white-space: normal; overflow-wrap: break-word; line-height: 1.22; }
 
   /* head-to-head: stack the pickers with "vs" centered between them */
   .h2h-pickers { flex-direction: column; align-items: stretch; }
