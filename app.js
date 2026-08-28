@@ -516,13 +516,18 @@ function matchup(rA, rB) {
 
 // ---- detail (per-player) view --------------------------------------------
 function openDetail(row) {
-  state.detail = { teamId: row.team_id, name: row.name, league: state.league };
+  state.detail = { teamId: row.team_id, name: row.name, league: state.league, from: state.mode };
   state.detailTab = "insights";
   state.detailSort = { key: "dateISO", dir: "asc" };
   state.view = "player";
+  state.mode = "standings";   // the player page is a sub-view of standings
   renderAll();
 }
-function backToStandings() { state.view = "standings"; state.detail = null; renderAll(); }
+function backToStandings() {
+  state.mode = (state.detail && state.detail.from) || "standings";
+  state.view = "standings"; state.detail = null;
+  renderAll();
+}
 
 // enrich each match with on-table games, the spot, and the per-match played-as
 function enrichedMatches() {
@@ -951,23 +956,99 @@ function renderH2HResult() {
   wireInfoButtons(el);
 }
 
+// ---- Leaderboard ---------------------------------------------------------
+const LB_MIN = 5;   // minimum matches to qualify
+const LB_TOP = 5;
+
+const LEADERBOARDS = [
+  { key: "over", title: "Overperformers", sub: "Playing furthest above their Fargo rating",
+    val: (r) => r.over, fmt: (v) => `${v > 0 ? "+" : ""}${v}`,
+    ctx: (r) => `played as ${r.playedAs} · Fargo ${r.fargo}` },
+  { key: "form", title: "Season Form", sub: "Highest played-as rating this season",
+    val: (r) => r.playedAs, fmt: (v) => v, ctx: (r) => `Fargo ${r.fargo}` },
+  { key: "gpmp", title: "Points per Match", sub: "Game points ÷ matches played",
+    val: (r) => r.GPMP, fmt: (v) => v.toFixed(2), ctx: (r) => `${r.GP} pts · ${r.MP} matches` },
+  { key: "gamewin", title: "Game Win %", sub: "Games won on the table (spots removed)",
+    val: (r) => r.gameWin, fmt: (v) => v.toFixed(1) + "%", ctx: (r) => `${r.MW}–${r.ML} matches` },
+  { key: "sos", title: "Toughest Schedule", sub: "Highest average opponent Fargo",
+    val: (r) => r.avgOpp, fmt: (v) => Math.round(v), ctx: (r) => `${r.MP} matches played` },
+];
+
+function leaderboardRows() {
+  const labels = bracketsFor(state.league);
+  const brackets = state.data.leagues[state.league].brackets;
+  let rows = [];
+  if (state.bracket === "__both__" || labels.length < 2) {
+    labels.forEach((l) => brackets[l].forEach((r) => rows.push({ ...r, bracket: l })));
+  } else {
+    rows = (brackets[state.bracket] || []).map((r) => ({ ...r, bracket: state.bracket }));
+  }
+  return rows.map((r) => {
+    const g = state.granular.byId[r.team_id] || {};
+    const playedAs = playedAsFor(r.team_id);
+    let wg = 0, lg = 0;
+    (g.matches || []).forEach((m) => { if (m.oppFargo != null) { wg += m.my - (m.myBp || 0); lg += m.opp - (m.oppBp || 0); } });
+    return {
+      ...r, fargo: g.fargo ?? null, avgOpp: g.avgOpp ?? null, playedAs,
+      over: (playedAs != null && g.fargo != null) ? playedAs - g.fargo : null,
+      gameWin: (wg + lg) > 0 ? (wg / (wg + lg)) * 100 : null,
+    };
+  });
+}
+
+function renderLeaderboard() {
+  const box = $("#leaderboard");
+  const labels = bracketsFor(state.league);
+  let controls = "";
+  if (labels.length > 1) {
+    const opts = [...labels.map((l) => ({ v: l, t: "Bracket " + l })), { v: "__both__", t: "Both" }];
+    controls = `<div class="controls"><div class="control-group"><span>Bracket</span>` +
+      `<div class="segmented" id="lbBracketSeg">` +
+      opts.map((o) => `<button data-b="${o.v}" aria-selected="${state.bracket === o.v}">${o.t}</button>`).join("") +
+      `</div></div></div>`;
+  }
+  const eligible = leaderboardRows().filter((r) => r.MP >= LB_MIN);
+  const cards = LEADERBOARDS.map((lb) => {
+    const ranked = eligible.filter((r) => lb.val(r) != null).sort((a, b) => lb.val(b) - lb.val(a)).slice(0, LB_TOP);
+    const items = ranked.map((r, i) => {
+      const rank = i < 3 ? `<span class="medal">${["🥇", "🥈", "🥉"][i]}</span>` : `<span class="lb-num">${i + 1}</span>`;
+      return `<li class="lb-row">${rank}` +
+        `<span class="lb-name" data-id="${r.team_id}" data-name="${escapeHtml(r.name)}">` +
+          `${escapeHtml(r.name)}<span class="lb-ctx">${lb.ctx(r)}</span></span>` +
+        `<span class="lb-val">${lb.fmt(lb.val(r))}</span></li>`;
+    }).join("");
+    return `<div class="lb-card"><h3 class="lb-title">${lb.title}</h3>` +
+      `<p class="lb-sub">${lb.sub}</p>` +
+      `<ol class="lb-list">${items || '<li class="lb-empty">Not enough data yet.</li>'}</ol></div>`;
+  }).join("");
+  box.innerHTML = controls + `<div class="lb-grid">${cards}</div>` +
+    `<p class="caption">Minimum ${LB_MIN} matches played to qualify.</p>`;
+  if (labels.length > 1) {
+    $("#lbBracketSeg").querySelectorAll("button").forEach((b) =>
+      b.onclick = () => { state.bracket = b.dataset.b; renderLeaderboard(); });
+  }
+  box.querySelectorAll(".lb-name").forEach((n) =>
+    n.onclick = () => openDetail({ team_id: +n.dataset.id, name: n.dataset.name }));
+}
+
 // ---- view switch ---------------------------------------------------------
 function renderAll() {
   updateFreshness(); updateRefreshButton();
   const hasData = state.data && state.data.order && state.data.order.length > 0;
-  const SECTIONS = ["#controls", "#stats", "#detailBar", "#tableCard", "#insights", "#h2h"];
+  const SECTIONS = ["#controls", "#stats", "#detailBar", "#tableCard", "#insights", "#h2h", "#leaderboard"];
   $("#emptyApp").classList.toggle("hidden", hasData);
   $("#sidebar").classList.toggle("hidden", !hasData);
   if (!hasData) { SECTIONS.forEach((s) => $(s).classList.add("hidden")); return; }
   renderSidebar();
 
-  if (state.mode === "h2h") {
-    ["#controls", "#stats", "#detailBar", "#tableCard", "#insights"].forEach((s) => $(s).classList.add("hidden"));
-    $("#h2h").classList.remove("hidden");
-    renderH2H();
+  if (state.mode === "h2h" || state.mode === "leaderboard") {
+    SECTIONS.forEach((s) => $(s).classList.add("hidden"));
+    if (state.mode === "h2h") { $("#h2h").classList.remove("hidden"); renderH2H(); }
+    else { $("#leaderboard").classList.remove("hidden"); renderLeaderboard(); }
     return;
   }
   $("#h2h").classList.add("hidden");
+  $("#leaderboard").classList.add("hidden");
   const standings = state.view === "standings";
   const insights = !standings && state.detailTab === "insights";
   $("#controls").classList.toggle("hidden", !standings);
