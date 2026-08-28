@@ -324,8 +324,12 @@ def build_snapshot():
 #   2. a local file next to this module — local-dev persistence
 # Values are gzip+base64 so they stay small and identical across backends.
 # ---------------------------------------------------------------------------
-_KV_URL = (os.environ.get("KV_REST_API_URL") or "").rstrip("/")
-_KV_TOKEN = os.environ.get("KV_REST_API_TOKEN") or ""
+# Upstash-for-Redis via the Vercel Marketplace injects KV_REST_API_*; accept the
+# native Upstash names too, in case the integration uses those.
+_KV_URL = (os.environ.get("KV_REST_API_URL")
+           or os.environ.get("UPSTASH_REDIS_REST_URL") or "").rstrip("/")
+_KV_TOKEN = (os.environ.get("KV_REST_API_TOKEN")
+             or os.environ.get("UPSTASH_REDIS_REST_TOKEN") or "")
 _CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pal_cache")
 _SNAP_KEY = "pal-snapshot"
 _LEASE_KEY = "pal-lease"

@@ -49,9 +49,12 @@ the static frontend and the API. It fits the free (Hobby) tier.
 1. Push this repo to GitHub and **Import** it at [vercel.com/new](https://vercel.com/new)
    (leave all settings at their defaults — `vercel.json` + `pyproject.toml`
    supply the config).
-2. **Add a KV store** (Storage → Create → **KV**) and connect it to the project.
-   This is **required** — it's the shared cache. Vercel injects
-   `KV_REST_API_URL` and `KV_REST_API_TOKEN` automatically.
+2. **Add a Redis store** and connect it to the project — this is the shared
+   cache (**required**). Vercel's first-party KV was retired in Dec 2024, so add
+   **Upstash for Redis from the Marketplace**: Storage → Create → pick the
+   Marketplace / Redis provider (**Upstash**), *not* the native "Blob" or
+   "Edge/Global Config". Connecting it injects `KV_REST_API_URL` and
+   `KV_REST_API_TOKEN` (Upstash's `UPSTASH_REDIS_REST_*` are accepted too).
 3. **Add environment variables** (Settings → Environment Variables):
    - `PAL_USER` / `PAL_PASS` — the service account that does the scraping.
    - `CRON_SECRET` — any random string; protects the daily cron trigger.
