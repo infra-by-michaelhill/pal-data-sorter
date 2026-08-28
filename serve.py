@@ -2,9 +2,12 @@
 """
 PAL Data Sorter — local dev server.
 
-Reuses the exact same request handler that Vercel runs (index.py), so what you
-see locally matches the hosted version. Standard library only — nothing to
-install beyond Python itself.
+Runs the same WSGI `app` that Vercel runs (index.py), via the standard library's
+wsgiref server (threaded, so a long refresh doesn't block page loads). So local
+behaves like production. Standard library only.
+
+Set PAL_USER / PAL_PASS in the environment so the refresh can scrape:
+    PAL_USER=you@example.com PAL_PASS=secret python3 serve.py --open
 
 Usage:
     python3 serve.py                 # serve http://127.0.0.1:8765
@@ -14,11 +17,21 @@ Usage:
 
 import argparse
 import socket
+import socketserver
 import threading
 import webbrowser
-from http.server import ThreadingHTTPServer
+from wsgiref.simple_server import WSGIServer, WSGIRequestHandler, make_server
 
-from index import handler  # the same handler Vercel uses
+from index import app
+
+
+class _ThreadingWSGIServer(socketserver.ThreadingMixIn, WSGIServer):
+    daemon_threads = True
+
+
+class _QuietHandler(WSGIRequestHandler):
+    def log_message(self, *_):
+        pass
 
 
 def _port_in_use(host, port):
@@ -40,7 +53,8 @@ def main():
             webbrowser.open(url)
         return
 
-    server = ThreadingHTTPServer((args.host, args.port), handler)
+    server = make_server(args.host, args.port, app,
+                         server_class=_ThreadingWSGIServer, handler_class=_QuietHandler)
     print(f"PAL Data Sorter running at {url}")
     print("Leave this window open while you use it. Press Ctrl+C to stop.")
     if args.open:

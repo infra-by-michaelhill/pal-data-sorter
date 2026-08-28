@@ -13,6 +13,7 @@ ephemeral serverless instances.
 """
 
 import base64
+import concurrent.futures
 import datetime
 import gzip
 import http.cookiejar
@@ -259,65 +260,75 @@ def parse_matches(html, subject_name):
 
 
 # ---------------------------------------------------------------------------
-# High-level entry points (shared by serve.py and the Vercel functions)
+# Service account + refresh policy (Model B: open app, server-side scraping)
 # ---------------------------------------------------------------------------
-def fetch_dataset(user, password):
-    user = (user or "").strip()
-    if not user or not password:
-        raise ValueError("Email and password are required.")
+SERVICE_USER = os.environ.get("PAL_USER") or ""
+SERVICE_PASS = os.environ.get("PAL_PASS") or ""
+CRON_SECRET = os.environ.get("CRON_SECRET") or ""
+COOLDOWN_SECONDS = 3600          # manual refresh: at most once per hour
+_LEASE_SECONDS = 150             # a refresh in flight blocks others this long
+
+
+def _now():
+    return datetime.datetime.now(datetime.timezone.utc)
+
+
+def build_snapshot():
+    """Scrape everything with the service account: standings for every active
+    league plus each player's match history. Returns one self-contained snapshot."""
+    if not (SERVICE_USER and SERVICE_PASS):
+        raise RuntimeError("Service account not configured (set PAL_USER / PAL_PASS).")
     client = Client()
-    login(client, user, password)
+    login(client, SERVICE_USER, SERVICE_PASS)
     dataset = build_dataset(client)
-    dataset["cookie"] = client.cookie_header()   # handed to the browser
-    return dataset
+    cookie = client.cookie_header()
 
+    players, seen = [], set()
+    for key in dataset["order"]:
+        for rows in dataset["leagues"][key]["brackets"].values():
+            for r in rows:
+                if r["team_id"] not in seen:
+                    seen.add(r["team_id"]); players.append((r["team_id"], r["name"]))
 
-class _CookieClient:
-    """Minimal client that reuses an existing session cookie (no re-login)."""
-    def __init__(self, cookie): self.cookie = cookie
-    def get(self, url): return get_with_cookie(url, self.cookie)
+    def one(p):
+        # PAL throttles heavy concurrency (500s), so keep it modest and retry blips.
+        tid, name = p
+        for attempt in range(3):
+            try:
+                r = parse_matches(get_with_cookie(f"{BASE}/league/team/{tid}/", cookie), name)
+                vals = [m["oppFargo"] for m in r["matches"] if m["oppFargo"] is not None]
+                return str(tid), {"fargo": r["fargo"], "matches": r["matches"],
+                                  "avgOpp": round(sum(vals) / len(vals), 1) if vals else None}
+            except Exception:
+                if attempt == 2:
+                    return str(tid), None
 
+    by_id = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=6) as ex:
+        for tid, val in ex.map(one, players):
+            if val:
+                by_id[tid] = val
 
-def fetch_dataset_cookie(cookie):
-    """Rebuild standings from an existing logged-in cookie (used by Refresh)."""
-    if not cookie:
-        raise RuntimeError("Session expired — sign in again.")
-    dataset = build_dataset(_CookieClient(cookie))
-    dataset["cookie"] = cookie
-    return dataset
-
-
-def fetch_player(cookie, team_id, name):
-    if not cookie:
-        raise RuntimeError("Session expired — sign in again.")
-    tid = int(team_id)
-    html = get_with_cookie(f"{BASE}/league/team/{tid}/", cookie)
-    result = parse_matches(html, name or "")
-    result["team_id"] = tid
-    return result
-
-
-def verify_cookie(cookie):
-    """Confirm a cookie is a real logged-in PAL session (gate for cache writes)."""
-    if not cookie or "sessionid=" not in cookie:
-        return False
-    try:
-        return "Logout" in get_with_cookie(f"{BASE}/league/", cookie)
-    except Exception:
-        return False
+    return {
+        "fetchedAt": _now().isoformat(timespec="seconds"),
+        "order": dataset["order"],
+        "leagues": dataset["leagues"],
+        "byId": by_id,
+    }
 
 
 # ---------------------------------------------------------------------------
-# Shared cache for granular data (rarely changes; expensive to compute).
-#   Backend ladder:
-#     1. Vercel KV / Upstash Redis over its REST API  -> shared + persistent
-#        (set KV_REST_API_URL + KV_REST_API_TOKEN; stdlib HTTP, no SDK)
-#     2. a local file next to this module               -> local-dev persistence
-#     3. nothing (read-only serverless FS, no KV)        -> graceful no-op
+# Shared snapshot cache.  Backend ladder:
+#   1. Vercel KV / Upstash Redis over its REST API — shared + persistent, and
+#      REQUIRED on Vercel (KV_REST_API_URL + KV_REST_API_TOKEN; stdlib HTTP)
+#   2. a local file next to this module — local-dev persistence
+# Values are gzip+base64 so they stay small and identical across backends.
 # ---------------------------------------------------------------------------
 _KV_URL = (os.environ.get("KV_REST_API_URL") or "").rstrip("/")
 _KV_TOKEN = os.environ.get("KV_REST_API_TOKEN") or ""
 _CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pal_cache")
+_SNAP_KEY = "pal-snapshot"
+_LEASE_KEY = "pal-lease"
 
 
 def _kv_get(key):
@@ -335,39 +346,82 @@ def _kv_set(key, value):
         return json.loads(r.read().decode()).get("result") == "OK"
 
 
-def cache_get_granular(key):
-    full = "pal-granular-" + re.sub(r"[^a-zA-Z0-9_-]", "", key or "default")
+def _backend_get(name):
     if _KV_URL and _KV_TOKEN:
         try:
-            res = _kv_get(full)
-            if res:
-                return json.loads(gzip.decompress(base64.b64decode(res)).decode())
+            return _kv_get(name)
         except Exception:
-            pass
-        return None
+            return None
     try:
-        with open(os.path.join(_CACHE_DIR, full + ".json"), encoding="utf-8") as f:
-            return json.load(f)
+        with open(os.path.join(_CACHE_DIR, name), encoding="utf-8") as f:
+            return f.read()
     except Exception:
         return None
 
 
-def cache_put_granular(key, by_id):
-    full = "pal-granular-" + re.sub(r"[^a-zA-Z0-9_-]", "", key or "default")
-    fetched_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
-    payload = {"byId": by_id, "fetchedAt": fetched_at}
+def _backend_put(name, value):
     if _KV_URL and _KV_TOKEN:
         try:
-            blob = base64.b64encode(gzip.compress(json.dumps(payload).encode())).decode()
-            if _kv_set(full, blob):
-                return True, fetched_at
+            return _kv_set(name, value)
         except Exception:
-            pass
-        return False, fetched_at
+            return False
     try:
         os.makedirs(_CACHE_DIR, exist_ok=True)
-        with open(os.path.join(_CACHE_DIR, full + ".json"), "w", encoding="utf-8") as f:
-            json.dump(payload, f)
-        return True, fetched_at
+        with open(os.path.join(_CACHE_DIR, name), "w", encoding="utf-8") as f:
+            f.write(value)
+        return True
     except Exception:
-        return False, fetched_at
+        return False
+
+
+def cache_get_snapshot():
+    raw = _backend_get(_SNAP_KEY)
+    if not raw:
+        return None
+    try:
+        return json.loads(gzip.decompress(base64.b64decode(raw)).decode())
+    except Exception:
+        return None
+
+
+def cache_put_snapshot(snapshot):
+    blob = base64.b64encode(gzip.compress(json.dumps(snapshot).encode())).decode()
+    return _backend_put(_SNAP_KEY, blob)
+
+
+def snapshot_age_seconds():
+    snap = cache_get_snapshot()
+    if not snap or not snap.get("fetchedAt"):
+        return None
+    try:
+        return (_now() - datetime.datetime.fromisoformat(snap["fetchedAt"])).total_seconds()
+    except Exception:
+        return None
+
+
+def acquire_refresh_lease():
+    """True if we may start a refresh; False if one is already in flight."""
+    raw = _backend_get(_LEASE_KEY)
+    if raw:
+        try:
+            if (_now() - datetime.datetime.fromisoformat(raw)).total_seconds() < _LEASE_SECONDS:
+                return False
+        except Exception:
+            pass
+    return _backend_put(_LEASE_KEY, _now().isoformat())
+
+
+def do_refresh(is_cron):
+    """Refresh the snapshot. Public callers are capped at once per COOLDOWN; the
+    cron (is_cron) bypasses it. Returns (status_code, body_dict)."""
+    if not is_cron:
+        age = snapshot_age_seconds()
+        if age is not None and age < COOLDOWN_SECONDS:
+            return 429, {"error": "Data is already fresh — try again later.",
+                         "retryAfterSec": int(COOLDOWN_SECONDS - age)}
+        if not acquire_refresh_lease():
+            return 429, {"error": "A refresh is already in progress — try again shortly.",
+                         "retryAfterSec": 60}
+    snapshot = build_snapshot()
+    stored = cache_put_snapshot(snapshot)
+    return 200, {"ok": True, "stored": stored, "fetchedAt": snapshot["fetchedAt"]}

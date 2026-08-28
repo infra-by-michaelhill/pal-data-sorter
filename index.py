@@ -1,18 +1,21 @@
 """
-PAL Data Sorter — single request handler (the app's one entrypoint).
+PAL Data Sorter — the app's single WSGI entrypoint (Model B: open, read-only).
 
-Serves the static frontend on GET and the JSON API on POST
-(/api/data, /api/player), using the shared scraper in pal_core.py.
+Vercel loads `app` (declared in pyproject.toml [tool.vercel] entrypoint) and
+routes every request to it. serve.py runs the same `app` locally via wsgiref.
 
-On Vercel this `handler` class is the one entrypoint (declared in vercel.json:
-every route is sent here). Locally, serve.py imports this exact same `handler`,
-so local and hosted behave identically. Standard library only.
+Routes:
+  GET  /api/snapshot   -> the cached dataset the UI renders (standings + detail)
+  GET  /api/refresh    -> cron trigger (Vercel sends a GET + Bearer CRON_SECRET)
+  POST /api/refresh    -> manual refresh (public; rate-limited to once per hour)
+  GET  /*              -> static files (index.html, app.js, styles.css, favicon)
+
+Standard library only.
 """
 
 import json
 import os
 import urllib.parse
-from http.server import BaseHTTPRequestHandler
 
 import pal_core
 
@@ -25,69 +28,62 @@ STATIC_TYPES = {
     ".ico": "image/x-icon",
     ".png": "image/png",
 }
+REASON = {200: "OK", 400: "Bad Request", 403: "Forbidden", 404: "Not Found",
+          429: "Too Many Requests", 500: "Internal Server Error"}
 
 
-class handler(BaseHTTPRequestHandler):
-    def _send(self, code, body, ctype="application/json"):
-        data = body if isinstance(body, bytes) else body.encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", ctype)
-        self.send_header("Content-Length", str(len(data)))
-        self.send_header("Cache-Control", "no-store, must-revalidate")
-        self.end_headers()
-        self.wfile.write(data)
+def _send(start_response, code, body, ctype="application/json"):
+    data = body if isinstance(body, (bytes, bytearray)) else body.encode("utf-8")
+    start_response(f"{code} {REASON.get(code, 'OK')}", [
+        ("Content-Type", ctype),
+        ("Content-Length", str(len(data))),
+        ("Cache-Control", "no-store"),
+    ])
+    return [data]
 
-    # ---- static frontend ------------------------------------------------
-    def do_GET(self):
-        parsed = urllib.parse.urlparse(self.path)
-        path = parsed.path
-        if path == "/api/granular":   # read the shared granular cache + its age
-            key = urllib.parse.parse_qs(parsed.query).get("key", ["default"])[0]
-            data = pal_core.cache_get_granular(key)
-            self._send(200, json.dumps(data or {"byId": None, "fetchedAt": None}))
-            return
+
+def _json(start_response, code, obj):
+    return _send(start_response, code, json.dumps(obj))
+
+
+def _is_cron(environ):
+    secret = pal_core.CRON_SECRET
+    return bool(secret) and environ.get("HTTP_AUTHORIZATION") == f"Bearer {secret}"
+
+
+def _refresh(start_response, is_cron):
+    try:
+        code, body = pal_core.do_refresh(is_cron)
+        return _json(start_response, code, body)
+    except Exception as e:  # noqa: BLE001 — surface the message to the UI
+        return _json(start_response, 500, {"error": str(e)})
+
+
+def app(environ, start_response):
+    method = environ.get("REQUEST_METHOD", "GET")
+    path = environ.get("PATH_INFO", "/") or "/"
+
+    if path == "/api/snapshot" and method == "GET":
+        snap = pal_core.cache_get_snapshot()
+        return _json(start_response, 200,
+                     snap or {"fetchedAt": None, "order": [], "leagues": {}, "byId": {}})
+
+    if path == "/api/refresh":
+        if method == "POST":
+            return _refresh(start_response, _is_cron(environ))
+        if method == "GET":
+            if not _is_cron(environ):
+                return _json(start_response, 403, {"error": "forbidden"})
+            return _refresh(start_response, True)
+        return _json(start_response, 404, {"error": "not found"})
+
+    # static files
+    if method == "GET":
         rel = "index.html" if path in ("/", "") else path.lstrip("/")
         ext = os.path.splitext(rel)[1].lower()
         target = os.path.normpath(os.path.join(BASE_DIR, rel))
-        # only serve known static asset types that live under this folder
-        if (ext not in STATIC_TYPES or not target.startswith(BASE_DIR)
-                or not os.path.isfile(target)):
-            self._send(404, json.dumps({"error": "not found"}))
-            return
-        with open(target, "rb") as f:
-            self._send(200, f.read(), STATIC_TYPES[ext])
+        if ext in STATIC_TYPES and target.startswith(BASE_DIR) and os.path.isfile(target):
+            with open(target, "rb") as f:
+                return _send(start_response, 200, f.read(), STATIC_TYPES[ext])
 
-    # ---- JSON API -------------------------------------------------------
-    def do_POST(self):
-        path = urllib.parse.urlparse(self.path).path
-        try:
-            n = int(self.headers.get("Content-Length", 0) or 0)
-            req = json.loads(self.rfile.read(n) or b"{}")
-        except Exception:
-            self._send(400, json.dumps({"error": "Bad request."}))
-            return
-        try:
-            if path == "/api/data":
-                if req.get("cookie") and not req.get("password"):
-                    self._send(200, json.dumps(pal_core.fetch_dataset_cookie(req.get("cookie"))))
-                else:
-                    self._send(200, json.dumps(pal_core.fetch_dataset(
-                        req.get("user"), req.get("password"))))
-            elif path == "/api/player":
-                self._send(200, json.dumps(pal_core.fetch_player(
-                    req.get("cookie"), req.get("team_id"), req.get("name"))))
-            elif path == "/api/granular":   # store the shared granular cache
-                if not pal_core.verify_cookie(req.get("cookie")):
-                    self._send(403, json.dumps({"error": "Sign in again to refresh shared data."}))
-                    return
-                ok, fetched_at = pal_core.cache_put_granular(req.get("key"), req.get("byId") or {})
-                self._send(200, json.dumps({"stored": ok, "fetchedAt": fetched_at}))
-            else:
-                self._send(404, json.dumps({"error": "not found"}))
-        except (TypeError, ValueError) as e:
-            self._send(400, json.dumps({"error": str(e) or "Invalid request."}))
-        except Exception as e:  # noqa: BLE001 — surface message to the UI
-            self._send(400, json.dumps({"error": str(e)}))
-
-    def log_message(self, *_):
-        pass
+    return _json(start_response, 404, {"error": "not found"})

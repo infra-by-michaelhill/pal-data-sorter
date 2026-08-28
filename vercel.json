@@ -1,13 +1,9 @@
 {
-  "version": 2,
-  "builds": [
-    {
-      "src": "index.py",
-      "use": "@vercel/python",
-      "config": { "includeFiles": "{index.html,app.js,styles.css,favicon.svg,pal_core.py}" }
-    }
-  ],
-  "routes": [
-    { "src": "/(.*)", "dest": "index.py" }
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "functions": {
+    "index.py": { "maxDuration": 300 }
+  },
+  "crons": [
+    { "path": "/api/refresh", "schedule": "0 8 * * *" }
   ]
 }

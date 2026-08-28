@@ -1,9 +1,8 @@
-/* PAL Data Sorter — front-end logic.
-   Core: log in once -> server returns standings for all leagues/brackets ->
-   everything (league, bracket, sort) is local.
-   Optional: "Load granular data" fetches each player's match history behind a
-   progress bar, which adds Fargo + Avg-Opp-Fargo columns and an opponent
-   detail view. Any granular failure degrades to a normal message; core stays. */
+/* PAL Data Sorter — front-end logic (Model B: open, read-only).
+   Loads a shared cached snapshot (standings + every player's match history) from
+   /api/snapshot and renders it — no login. A single top-bar Refresh asks the
+   server to re-scrape (service account); it's capped to once per hour, so the
+   button greys out with a countdown in between. All sorting/filtering is local. */
 
 const $ = (s) => document.querySelector(s);
 
@@ -35,34 +34,21 @@ const DETAIL_COLUMNS = [
 const DEFAULT_SORT = { key: "GP", dir: "desc" };
 
 const state = {
-  data: null, cookie: null,
-  league: "standard", bracket: null, showBracketCol: false,
+  data: null,
+  league: null, bracket: null, showBracketCol: false,
   sort: { ...DEFAULT_SORT },
   view: "standings",                    // "standings" | "player"
   detail: null, detailTab: "insights",  // "insights" | "matches"
   detailSort: { key: "dateISO", dir: "asc" },
-  granular: { loaded: false, loading: false, byId: {}, done: 0, total: 0, errors: 0, fetchedAt: null, shared: true },
+  granular: { loaded: false, byId: {}, fetchedAt: null },
+  refreshing: false,
 };
 
 // ---- storage helpers -----------------------------------------------------
 const store = {
-  saveEmail(e) { try { localStorage.setItem("pal.email", e); } catch (_) {} },
-  email() { try { return localStorage.getItem("pal.email") || ""; } catch (_) { return ""; } },
-  saveCreds(e, p) { try { localStorage.setItem("pal.creds", btoa(unescape(encodeURIComponent(e + "\n" + p)))); } catch (_) {} },
-  creds() {
-    try {
-      const raw = localStorage.getItem("pal.creds");
-      if (!raw) return null;
-      const [user, password] = decodeURIComponent(escape(atob(raw))).split("\n");
-      return { user, password };
-    } catch (_) { return null; }
-  },
-  clearCreds() { try { localStorage.removeItem("pal.creds"); } catch (_) {} },
-  cacheData(d) { try { sessionStorage.setItem("pal.data", JSON.stringify(d)); } catch (_) {} },
-  cachedData() { try { return JSON.parse(sessionStorage.getItem("pal.data") || "null"); } catch (_) { return null; } },
-  cacheGranular(g) { try { sessionStorage.setItem("pal.granular", JSON.stringify(g)); } catch (_) {} },
-  cachedGranular() { try { return JSON.parse(sessionStorage.getItem("pal.granular") || "null"); } catch (_) { return null; } },
-  clearAll() { try { localStorage.removeItem("pal.creds"); sessionStorage.removeItem("pal.data"); sessionStorage.removeItem("pal.granular"); } catch (_) {} },
+  // cache the last snapshot so a reload paints instantly before the fetch lands
+  cacheData(d) { try { sessionStorage.setItem("pal.snapshot", JSON.stringify(d)); } catch (_) {} },
+  cachedData() { try { return JSON.parse(sessionStorage.getItem("pal.snapshot") || "null"); } catch (_) { return null; } },
   theme() { try { return localStorage.getItem("pal.theme"); } catch (_) { return null; } },
   saveTheme(t) { try { localStorage.setItem("pal.theme", t); } catch (_) {} },
 };
@@ -153,157 +139,91 @@ function renderTable(columns, rows, opts) {
 }
 
 // ---- network -------------------------------------------------------------
-async function fetchData(user, password) {
-  const res = await fetch("/api/data", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ user, password }),
-  });
+async function fetchSnapshot() {
+  const res = await fetch("/api/snapshot");
   const data = await res.json();
   if (!res.ok) throw new Error(data.error || "Request failed");
   return data;
 }
-async function fetchPlayer(teamId, name) {
-  const res = await fetch("/api/player", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cookie: state.cookie, team_id: teamId, name }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Request failed");
-  return data;
+async function triggerRefresh() {
+  const res = await fetch("/api/refresh", { method: "POST" });
+  const data = await res.json().catch(() => ({}));
+  return { ok: res.ok, status: res.status, data };
 }
 
-// ---- login flow ----------------------------------------------------------
-$("#loginForm").addEventListener("submit", async (e) => {
-  e.preventDefault();
-  const user = $("#email").value.trim(), password = $("#password").value;
-  const btn = $("#loginBtn"), err = $("#loginError");
-  err.classList.add("hidden"); btn.disabled = true; btn.textContent = "Signing in…";
-  try {
-    const data = await fetchData(user, password);
-    store.saveEmail(user);
-    if ($("#remember").checked) store.saveCreds(user, password); else store.clearCreds();
-    onData(data);
-  } catch (ex) {
-    err.textContent = ex.message; err.classList.remove("hidden");
-  } finally { btn.disabled = false; btn.textContent = "Sign in & load data"; }
-});
+// ---- single manual refresh (server scrapes; capped at once per hour) ------
+const COOLDOWN_MS = 60 * 60 * 1000;
+$("#refreshBtn").addEventListener("click", doRefresh);
 
-$("#signoutBtn").addEventListener("click", () => {
-  store.clearAll();
-  state.data = null; state.cookie = null;
-  state.granular = { loaded: false, loading: false, byId: {}, done: 0, total: 0, errors: 0, fetchedAt: null, shared: true };
-  state.view = "standings";
-  $("#app").classList.add("hidden"); $("#login").classList.remove("hidden");
-  $("#password").value = "";
-});
-
-// Single refresh: re-pull standings AND all detail data in the background,
-// then publish to the shared cache. Reuses the current session where possible,
-// so it doesn't re-prompt for a password.
-$("#refreshBtn").addEventListener("click", refreshAll);
-async function refreshAll() {
-  if (state.granular.loading) return;
-  const btn = $("#refreshBtn");
-  btn.disabled = true; btn.textContent = "Refreshing…";
-  showTopProgress(true); setTopProgress(0, 1);
+async function doRefresh() {
+  if (state.refreshing) return;
+  if (cooldownRemaining() > 0) { flashMeta(`Data's fresh — try again in ${Math.ceil(cooldownRemaining() / 60000)}m`); return; }
+  state.refreshing = true;
+  showTopProgress(true); updateFreshness(); updateRefreshButton();
   try {
-    const creds = store.creds();
-    let data;
-    if (creds) data = await fetchData(creds.user, creds.password);
-    else if (state.cookie) data = await fetchDataByCookie(state.cookie);
-    else {
-      const u = prompt("Email:", store.email() || "");
-      const p = u ? prompt("Password:") : null;
-      if (!u || !p) throw new Error("cancelled");
-      data = await fetchData(u, p);
+    const r = await triggerRefresh();
+    if (r.ok) {
+      onData(await fetchSnapshot(), { keepView: true });
+    } else if (r.status === 429) {
+      flashMeta(r.data.error || "Data is fresh — try again shortly.");
+    } else {
+      flashMeta(r.data.error || "Refresh failed.");
     }
-    onData(data, { keepView: true, skipGranularInit: true });  // keep standings fresh, keep place
-    await refreshGranular();                                    // re-scrape + publish detail data
-  } catch (ex) {
-    if (ex.message !== "cancelled") alert("Refresh failed: " + ex.message);
+  } catch (_) {
+    flashMeta("Refresh failed — check your connection.");
   } finally {
-    btn.disabled = false; btn.textContent = "Refresh"; showTopProgress(false); updateFreshness();
+    state.refreshing = false; showTopProgress(false); updateFreshness(); updateRefreshButton();
   }
 }
 
-async function fetchDataByCookie(cookie) {
-  const res = await fetch("/api/data", {
-    method: "POST", headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ cookie }),
-  });
-  const data = await res.json();
-  if (!res.ok) throw new Error(data.error || "Request failed");
-  return data;
+function cooldownRemaining() {
+  if (!state.granular.fetchedAt) return 0;
+  return Math.max(0, COOLDOWN_MS - (Date.now() - new Date(state.granular.fetchedAt).getTime()));
+}
+function updateRefreshButton() {
+  const btn = $("#refreshBtn"); if (!btn) return;
+  if (state.refreshing) { btn.disabled = true; btn.textContent = "Refreshing…"; return; }
+  const wait = cooldownRemaining();
+  if (wait > 0) { btn.disabled = true; btn.textContent = `Refresh in ${Math.ceil(wait / 60000)}m`; }
+  else { btn.disabled = false; btn.textContent = "Refresh"; }
+}
+let _metaTimer = null;
+function flashMeta(msg) {
+  const meta = $("#fetchedMeta"); if (!meta) return;
+  meta.textContent = msg;
+  clearTimeout(_metaTimer); _metaTimer = setTimeout(updateFreshness, 4000);
 }
 
 // ---- once we have data ---------------------------------------------------
-function onData(data, opts = {}) {
-  state.data = data; state.cookie = data.cookie || null;
-  store.cacheData(data);
-  if (!opts.keepView) {
-    state.league = (data.order && data.order[0]) || Object.keys(data.leagues)[0];
+function onData(snap, opts = {}) {
+  state.data = { order: snap.order || [], leagues: snap.leagues || {} };
+  state.granular.byId = snap.byId || {};
+  state.granular.loaded = Object.keys(state.granular.byId).length > 0;
+  state.granular.fetchedAt = snap.fetchedAt || null;
+  store.cacheData(snap);
+  const hasData = state.data.order.length > 0;
+  if (!opts.keepView || !state.league) {
+    state.league = hasData ? (state.data.order[0]) : null;
     state.sort = { ...DEFAULT_SORT };
     state.view = "standings"; state.detail = null;
-    pickDefaultBracket();
+    if (state.league) pickDefaultBracket();
   }
-  $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
-  updateFreshness();
   renderAll();
-  if (!opts.skipGranularInit && !state.granular.loaded && !state.granular.loading) initGranular();
 }
 
-// the one "last updated" indicator = freshness of the shared detail data
+// the one "last updated" indicator
 function updateFreshness() {
-  const g = state.granular;
-  const meta = $("#fetchedMeta");
-  if (!meta) return;
-  if (g.loading) { meta.textContent = `Refreshing… ${g.done}/${g.total}`; return; }
-  if (g.loaded && g.fetchedAt) {
-    meta.textContent = `Updated ${relAge(g.fetchedAt)}` + (g.shared === false ? " (this device)" : "");
-  } else {
-    meta.textContent = "Not refreshed yet";
-  }
+  const meta = $("#fetchedMeta"); if (!meta) return;
+  if (state.refreshing) { meta.textContent = "Refreshing… (this can take a minute or two)"; return; }
+  meta.textContent = state.granular.fetchedAt ? `Updated ${relAge(state.granular.fetchedAt)}` : "No data yet";
 }
 function showTopProgress(on) { $("#topProgress").classList.toggle("hidden", !on); }
-function setTopProgress(done, total) {
-  const pct = total ? Math.round((done / total) * 100) : 0;
-  $("#topBar").style.width = pct + "%";
-}
 
 function bracketsFor(league) { return Object.keys(state.data.leagues[league].brackets).sort(); }
 function pickDefaultBracket() {
   const labels = bracketsFor(state.league);
   state.bracket = labels.length > 1 ? "__both__" : labels[0];
 }
-function allPlayers() {
-  const seen = new Set(), out = [];
-  for (const key of state.data.order) {
-    const bks = state.data.leagues[key].brackets;
-    for (const label of Object.keys(bks)) {
-      for (const r of bks[label]) {
-        if (r.team_id != null && !seen.has(r.team_id)) { seen.add(r.team_id); out.push({ team_id: r.team_id, name: r.name }); }
-      }
-    }
-  }
-  return out;
-}
-function avgOpp(matches) {
-  const vals = matches.map((m) => m.oppFargo).filter((v) => v !== null && v !== undefined);
-  if (!vals.length) return null;
-  return Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 10) / 10;
-}
-
-// ---- granular loading (shared cache) -------------------------------------
-async function pool(items, size, worker) {
-  let i = 0;
-  const runners = Array.from({ length: Math.min(size, items.length) }, async () => {
-    while (i < items.length) { const idx = i++; await worker(items[idx], idx); }
-  });
-  await Promise.all(runners);
-}
-
-function seasonKey() { return (state.data && state.data.order || []).join("-") || "default"; }
-
 function relAge(iso) {
   if (!iso) return "";
   const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
@@ -313,63 +233,6 @@ function relAge(iso) {
   return `${Math.round(h / 24)}d ago`;
 }
 
-function adoptGranular(byId, fetchedAt, shared) {
-  const g = state.granular;
-  g.byId = byId; g.fetchedAt = fetchedAt || null; g.loaded = true; g.errors = 0;
-  if (shared !== undefined) g.shared = shared;
-  store.cacheGranular({ byId, fetchedAt: g.fetchedAt });
-}
-
-// On load, adopt the shared cache once (no scrape) — session mirror first.
-async function initGranular() {
-  const cg = store.cachedGranular();
-  if (cg && cg.byId && Object.keys(cg.byId).length) {
-    adoptGranular(cg.byId, cg.fetchedAt);
-    updateFreshness(); renderStandingsTable();
-    return;
-  }
-  try {
-    const res = await fetch(`/api/granular?key=${encodeURIComponent(seasonKey())}`);
-    const j = await res.json();
-    if (j && j.byId && Object.keys(j.byId).length) {
-      adoptGranular(j.byId, j.fetchedAt);
-      updateFreshness(); renderStandingsTable();
-    }
-  } catch (_) { /* no shared cache yet — Refresh will build it */ }
-}
-
-// Re-scrape everyone (progress shown in the top bar) and publish to the cache.
-async function refreshGranular() {
-  if (!state.cookie) throw new Error("Session expired — sign in again.");
-  const players = allPlayers();
-  const g = state.granular;
-  g.loading = true; g.errors = 0; g.done = 0; g.total = players.length;
-  const byId = {};
-  updateFreshness(); setTopProgress(0, players.length);
-  await pool(players, 6, async (p) => {
-    try {
-      const r = await fetchPlayer(p.team_id, p.name);
-      byId[p.team_id] = { fargo: r.fargo, matches: r.matches || [], avgOpp: avgOpp(r.matches || []) };
-    } catch (_) { g.errors++; }
-    g.done++; setTopProgress(g.done, g.total); updateFreshness();
-  });
-  g.loading = false;
-  if (Object.keys(byId).length === 0) { updateFreshness(); return; }
-  g.byId = byId; g.loaded = true;
-  // publish to the shared cache for everyone else
-  let fetchedAt = new Date().toISOString(), shared = false;
-  try {
-    const res = await fetch("/api/granular", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cookie: state.cookie, key: seasonKey(), byId }),
-    });
-    const j = await res.json();
-    if (res.ok) { fetchedAt = j.fetchedAt || fetchedAt; shared = j.stored === true; }
-  } catch (_) { /* keep it locally */ }
-  g.fetchedAt = fetchedAt; g.shared = shared;
-  store.cacheGranular({ byId, fetchedAt });
-  updateFreshness(); renderAll();
-}
 
 // ---- standings view ------------------------------------------------------
 function renderLeagueSeg() {
@@ -779,6 +642,13 @@ document.addEventListener("click", (e) => {
 
 // ---- view switch ---------------------------------------------------------
 function renderAll() {
+  updateFreshness(); updateRefreshButton();
+  const hasData = state.data && state.data.order && state.data.order.length > 0;
+  $("#emptyApp").classList.toggle("hidden", hasData);
+  if (!hasData) {
+    ["#controls", "#stats", "#detailBar", "#tableCard", "#insights"].forEach((s) => $(s).classList.add("hidden"));
+    return;
+  }
   const standings = state.view === "standings";
   const insights = !standings && state.detailTab === "insights";
   $("#controls").classList.toggle("hidden", !standings);
@@ -839,18 +709,13 @@ function exportDetailCsv() {
 // ---- boot ----------------------------------------------------------------
 (async function boot() {
   initTheme();
-  $("#email").value = store.email();
-  if (store.creds()) $("#remember").checked = true;
-
+  // paint the cached snapshot instantly, then pull the latest from the server
   const cached = store.cachedData();
-  if (cached && cached.leagues) {
-    const cg = store.cachedGranular();
-    if (cg && cg.byId && Object.keys(cg.byId).length) adoptGranular(cg.byId, cg.fetchedAt);
-    onData(cached);
-    return;
-  }
-  const creds = store.creds();
-  if (creds) {
-    try { onData(await fetchData(creds.user, creds.password)); return; } catch (_) {}
-  }
+  if (cached && cached.order) onData(cached);
+  else renderAll();  // empty state until the fetch lands
+  try {
+    onData(await fetchSnapshot(), { keepView: !!(cached && cached.order && cached.order.length) });
+  } catch (_) { /* keep whatever we have */ }
+  // keep the "updated Nm ago" label and the refresh cooldown countdown live
+  setInterval(() => { if (!state.refreshing) { updateFreshness(); updateRefreshButton(); } }, 30000);
 })();
