@@ -272,6 +272,21 @@ def fetch_dataset(user, password):
     return dataset
 
 
+class _CookieClient:
+    """Minimal client that reuses an existing session cookie (no re-login)."""
+    def __init__(self, cookie): self.cookie = cookie
+    def get(self, url): return get_with_cookie(url, self.cookie)
+
+
+def fetch_dataset_cookie(cookie):
+    """Rebuild standings from an existing logged-in cookie (used by Refresh)."""
+    if not cookie:
+        raise RuntimeError("Session expired — sign in again.")
+    dataset = build_dataset(_CookieClient(cookie))
+    dataset["cookie"] = cookie
+    return dataset
+
+
 def fetch_player(cookie, team_id, name):
     if not cookie:
         raise RuntimeError("Session expired — sign in again.")

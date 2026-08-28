@@ -197,38 +197,77 @@ $("#signoutBtn").addEventListener("click", () => {
   $("#password").value = "";
 });
 
-$("#refreshBtn").addEventListener("click", async () => {
-  const creds = store.creds(); const btn = $("#refreshBtn");
+// Single refresh: re-pull standings AND all detail data in the background,
+// then publish to the shared cache. Reuses the current session where possible,
+// so it doesn't re-prompt for a password.
+$("#refreshBtn").addEventListener("click", refreshAll);
+async function refreshAll() {
+  if (state.granular.loading) return;
+  const btn = $("#refreshBtn");
   btn.disabled = true; btn.textContent = "Refreshing…";
+  showTopProgress(true); setTopProgress(0, 1);
   try {
-    let user, password;
-    if (creds) { user = creds.user; password = creds.password; }
+    const creds = store.creds();
+    let data;
+    if (creds) data = await fetchData(creds.user, creds.password);
+    else if (state.cookie) data = await fetchDataByCookie(state.cookie);
     else {
-      user = prompt("Email:", store.email() || "");
-      password = user ? prompt("Password:") : null;
-      if (!user || !password) throw new Error("cancelled");
+      const u = prompt("Email:", store.email() || "");
+      const p = u ? prompt("Password:") : null;
+      if (!u || !p) throw new Error("cancelled");
+      data = await fetchData(u, p);
     }
-    const data = await fetchData(user, password);
-    // standings refresh only re-pulls standings; the shared granular cache is
-    // independent (refresh it with its own button), so leave it in place.
-    onData(data);
+    onData(data, { keepView: true, skipGranularInit: true });  // keep standings fresh, keep place
+    await refreshGranular();                                    // re-scrape + publish detail data
   } catch (ex) {
     if (ex.message !== "cancelled") alert("Refresh failed: " + ex.message);
-  } finally { btn.disabled = false; btn.textContent = "Refresh"; }
-});
+  } finally {
+    btn.disabled = false; btn.textContent = "Refresh"; showTopProgress(false); updateFreshness();
+  }
+}
+
+async function fetchDataByCookie(cookie) {
+  const res = await fetch("/api/data", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ cookie }),
+  });
+  const data = await res.json();
+  if (!res.ok) throw new Error(data.error || "Request failed");
+  return data;
+}
 
 // ---- once we have data ---------------------------------------------------
-function onData(data) {
+function onData(data, opts = {}) {
   state.data = data; state.cookie = data.cookie || null;
   store.cacheData(data);
-  state.league = (data.order && data.order[0]) || Object.keys(data.leagues)[0];
-  state.sort = { ...DEFAULT_SORT };
-  state.view = "standings"; state.detail = null;
-  pickDefaultBracket();
-  $("#fetchedMeta").textContent = data.fetchedAt ? "Updated " + new Date(data.fetchedAt).toLocaleString() : "";
+  if (!opts.keepView) {
+    state.league = (data.order && data.order[0]) || Object.keys(data.leagues)[0];
+    state.sort = { ...DEFAULT_SORT };
+    state.view = "standings"; state.detail = null;
+    pickDefaultBracket();
+  }
   $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
+  updateFreshness();
   renderAll();
-  if (!state.granular.loaded && !state.granular.loading) initGranular();
+  if (!opts.skipGranularInit && !state.granular.loaded && !state.granular.loading) initGranular();
+}
+
+// the one "last updated" indicator = freshness of the shared detail data
+function updateFreshness() {
+  const g = state.granular;
+  const meta = $("#fetchedMeta");
+  if (!meta) return;
+  if (g.loading) { meta.textContent = `Refreshing… ${g.done}/${g.total}`; return; }
+  if (g.loaded && g.fetchedAt) {
+    meta.textContent = `Updated ${relAge(g.fetchedAt)}` + (g.shared === false ? " (this device)" : "");
+  } else {
+    meta.textContent = "Not refreshed yet";
+  }
+}
+function showTopProgress(on) { $("#topProgress").classList.toggle("hidden", !on); }
+function setTopProgress(done, total) {
+  const pct = total ? Math.round((done / total) * 100) : 0;
+  $("#topBar").style.width = pct + "%";
 }
 
 function bracketsFor(league) { return Object.keys(state.data.leagues[league].brackets).sort(); }
@@ -274,18 +313,19 @@ function relAge(iso) {
   return `${Math.round(h / 24)}d ago`;
 }
 
-function adoptGranular(byId, fetchedAt) {
+function adoptGranular(byId, fetchedAt, shared) {
   const g = state.granular;
   g.byId = byId; g.fetchedAt = fetchedAt || null; g.loaded = true; g.errors = 0;
+  if (shared !== undefined) g.shared = shared;
   store.cacheGranular({ byId, fetchedAt: g.fetchedAt });
 }
 
-// On load, get the shared cache once (no 80-page scrape) — session mirror first.
+// On load, adopt the shared cache once (no scrape) — session mirror first.
 async function initGranular() {
   const cg = store.cachedGranular();
   if (cg && cg.byId && Object.keys(cg.byId).length) {
     adoptGranular(cg.byId, cg.fetchedAt);
-    renderGranularControl(); renderStandingsTable();
+    updateFreshness(); renderStandingsTable();
     return;
   }
   try {
@@ -293,76 +333,42 @@ async function initGranular() {
     const j = await res.json();
     if (j && j.byId && Object.keys(j.byId).length) {
       adoptGranular(j.byId, j.fetchedAt);
-      renderGranularControl(); renderStandingsTable();
+      updateFreshness(); renderStandingsTable();
     }
-  } catch (_) { /* no shared cache reachable — the Load button stays */ }
+  } catch (_) { /* no shared cache yet — Refresh will build it */ }
 }
 
-// Manual refresh: re-scrape everyone, then store for everyone else.
-async function loadGranular() {
-  if (!state.cookie) { renderGranularControl("Session expired — sign in again to refresh detail data."); return; }
+// Re-scrape everyone (progress shown in the top bar) and publish to the cache.
+async function refreshGranular() {
+  if (!state.cookie) throw new Error("Session expired — sign in again.");
   const players = allPlayers();
   const g = state.granular;
-  g.loading = true; g.errors = 0; g.done = 0; g.total = players.length; g.byId = {};
-  renderGranularControl();
+  g.loading = true; g.errors = 0; g.done = 0; g.total = players.length;
+  const byId = {};
+  updateFreshness(); setTopProgress(0, players.length);
   await pool(players, 6, async (p) => {
     try {
       const r = await fetchPlayer(p.team_id, p.name);
-      g.byId[p.team_id] = { fargo: r.fargo, matches: r.matches || [], avgOpp: avgOpp(r.matches || []) };
+      byId[p.team_id] = { fargo: r.fargo, matches: r.matches || [], avgOpp: avgOpp(r.matches || []) };
     } catch (_) { g.errors++; }
-    g.done++; renderProgress();
+    g.done++; setTopProgress(g.done, g.total); updateFreshness();
   });
   g.loading = false;
-  if (Object.keys(g.byId).length === 0) {
-    renderGranularControl("Couldn’t load detail data. Standings are unaffected.");
-    return;
-  }
-  g.loaded = true;
+  if (Object.keys(byId).length === 0) { updateFreshness(); return; }
+  g.byId = byId; g.loaded = true;
   // publish to the shared cache for everyone else
+  let fetchedAt = new Date().toISOString(), shared = false;
   try {
     const res = await fetch("/api/granular", {
       method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ cookie: state.cookie, key: seasonKey(), byId: g.byId }),
+      body: JSON.stringify({ cookie: state.cookie, key: seasonKey(), byId }),
     });
     const j = await res.json();
-    g.fetchedAt = j.fetchedAt || new Date().toISOString();
-    g.shared = res.ok && j.stored === true;
-  } catch (_) { g.fetchedAt = new Date().toISOString(); g.shared = false; }
-  store.cacheGranular({ byId: g.byId, fetchedAt: g.fetchedAt });
-  renderGranularControl();
-  renderAll();
-}
-
-function renderProgress() {
-  const g = state.granular;
-  const pct = g.total ? Math.round((g.done / g.total) * 100) : 0;
-  const bar = $("#granularBar"); if (bar) bar.style.width = pct + "%";
-  const txt = $("#granularText"); if (txt) txt.textContent = `${g.done} / ${g.total}`;
-}
-
-function renderGranularControl(errorMsg) {
-  const wrap = $("#granularWrap"); if (!wrap) return;
-  const g = state.granular;
-  if (g.loading) {
-    wrap.innerHTML =
-      '<div class="progress"><div class="bar" id="granularBar"></div></div>' +
-      '<span class="progress-text" id="granularText"></span>';
-    renderProgress();
-    return;
-  }
-  if (g.loaded) {
-    const age = g.fetchedAt ? `Updated ${relAge(g.fetchedAt)}` : "Loaded";
-    const local = g.shared === false ? ` <span class="notice">(this device only)</span>` : "";
-    const miss = g.errors ? ` <span class="notice">(${g.errors} missing)</span>` : "";
-    wrap.innerHTML = `<span class="loaded-tag">✓ ${age}</span>` + local + miss +
-      ` <button class="btn btn-ghost btn-sm" id="granularReload">Refresh</button>`;
-    $("#granularReload").onclick = loadGranular;
-    return;
-  }
-  wrap.innerHTML =
-    `<button class="btn btn-secondary btn-sm" id="granularBtn">Load granular data</button>` +
-    (errorMsg ? ` <span class="notice">${escapeHtml(errorMsg)}</span>` : "");
-  $("#granularBtn").onclick = loadGranular;
+    if (res.ok) { fetchedAt = j.fetchedAt || fetchedAt; shared = j.stored === true; }
+  } catch (_) { /* keep it locally */ }
+  g.fetchedAt = fetchedAt; g.shared = shared;
+  store.cacheGranular({ byId, fetchedAt });
+  updateFreshness(); renderAll();
 }
 
 // ---- standings view ------------------------------------------------------
@@ -781,7 +787,7 @@ function renderAll() {
   $("#tableCard").classList.toggle("hidden", insights);
   $("#insights").classList.toggle("hidden", !insights);
   if (standings) {
-    renderLeagueSeg(); renderBracketSeg(); renderGranularControl();
+    renderLeagueSeg(); renderBracketSeg();
     renderStats(); renderStandingsTable();
   } else {
     renderDetailBar();

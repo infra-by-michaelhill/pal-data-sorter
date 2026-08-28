@@ -68,8 +68,11 @@ class handler(BaseHTTPRequestHandler):
             return
         try:
             if path == "/api/data":
-                self._send(200, json.dumps(pal_core.fetch_dataset(
-                    req.get("user"), req.get("password"))))
+                if req.get("cookie") and not req.get("password"):
+                    self._send(200, json.dumps(pal_core.fetch_dataset_cookie(req.get("cookie"))))
+                else:
+                    self._send(200, json.dumps(pal_core.fetch_dataset(
+                        req.get("user"), req.get("password"))))
             elif path == "/api/player":
                 self._send(200, json.dumps(pal_core.fetch_player(
                     req.get("cookie"), req.get("team_id"), req.get("name"))))

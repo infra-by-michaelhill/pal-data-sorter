@@ -132,6 +132,11 @@ body {
 .topbar-actions { display: flex; align-items: center; gap: 10px; }
 .meta { font-size: 0.76rem; color: hsl(var(--subtle)); }
 
+/* Top refresh progress bar (under the top bar) */
+.top-progress { height: 3px; background: hsl(var(--surface-2)); overflow: hidden; }
+.top-progress .bar { height: 100%; width: 0%; background: hsl(var(--accent));
+                     transition: width .2s ease; }
+
 .container { max-width: 1100px; margin: 0 auto; padding: 24px 22px 60px; }
 
 .controls {

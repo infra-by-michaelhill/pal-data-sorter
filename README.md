@@ -15,11 +15,12 @@ and re-sorting is instant and offline, with one-click **CSV export**.
   **Match Wins**, **Losses**, **Matches**, **Win %**, or player name.
 - A league with two brackets lets you view **A**, **B**, or **Both** (with a
   bracket badge); a single-bracket league just shows its table.
-- **Granular data is shared-cached.** The first person to load it scrapes every
-  player's match history (behind a progress bar); after that it's stored and
-  everyone else loads it instantly, with an **"Updated 3h ago"** age shown up
-  top. A **Refresh** button re-scrapes and re-publishes it for everyone. It adds
-  sortable **Fargo** and **Avg Opp Fargo** columns, and makes each row clickable
+- **Everything is shared-cached with one refresh.** The app always shows the
+  latest data it has instantly, with an **"Updated 3h ago"** age at the top. A
+  single **Refresh** (top bar, with a progress bar) re-pulls the standings *and*
+  every player's match history in the background and republishes to the shared
+  cache — so the next person just loads it, no waiting. The detail data adds
+  sortable **Fargo** and **Avg Opp Fargo** columns and makes each row clickable
   → a **player page** with two tabs:
   - **Matches** — every match with the official score, the **spot** (bonus
     points), the rating you **played as** that match, and W/L; all sortable and
