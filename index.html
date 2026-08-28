@@ -12,74 +12,102 @@
 </head>
 <body>
 
-  <!-- ============ App screen ============ -->
-  <section id="app">
-    <div class="topbar">
-      <div class="brand">
-        <svg viewBox="0 0 100 100" width="22" height="22" aria-hidden="true">
-          <g fill="currentColor">
-            <path d="M 14 18 L 86 18 L 58 50 L 42 50 Z"></path>
-            <path d="M 42 58 L 58 58 L 50 86 Z"></path>
-          </g>
-        </svg>
-        <span>PAL Data Sorter</span>
-      </div>
-      <div class="topbar-actions">
-        <span class="meta" id="fetchedMeta"></span>
-        <button class="btn btn-ghost btn-sm" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
-        <button class="btn btn-secondary btn-sm" id="refreshBtn">Refresh</button>
-      </div>
-    </div>
-    <div id="topProgress" class="top-progress hidden"><div class="bar" id="topBar"></div></div>
-
-    <div class="container">
-      <div id="modeSwitchWrap" class="mode-switch-wrap hidden">
-        <div class="segmented" id="modeSwitch" role="tablist"></div>
-      </div>
-
-      <div id="h2h" class="hidden"></div>
-
-      <div class="controls" id="controls">
-        <div class="control-group">
-          <span>League</span>
-          <div class="segmented" id="leagueSeg" role="tablist"></div>
+  <section id="app" class="app-shell">
+    <!-- ===== Left navigation ===== -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-top">
+        <div class="brand">
+          <svg viewBox="0 0 100 100" width="22" height="22" aria-hidden="true">
+            <g fill="currentColor">
+              <path d="M 14 18 L 86 18 L 58 50 L 42 50 Z"></path>
+              <path d="M 42 58 L 58 58 L 50 86 Z"></path>
+            </g>
+          </svg>
+          <span class="brand-name">PAL Data Sorter</span>
         </div>
-        <div class="control-group" id="bracketGroup">
-          <span>Bracket</span>
-          <div class="segmented" id="bracketSeg" role="tablist"></div>
-        </div>
-        <div class="spacer"></div>
-        <div class="control-group">
-          <span>&nbsp;</span>
-          <div id="colMenuWrap" class="col-wrap"></div>
-        </div>
-        <div class="control-group">
-          <span>&nbsp;</span>
-          <button class="btn btn-primary btn-sm" id="csvBtn">Export CSV</button>
-        </div>
+        <button class="collapse-btn" id="collapseBtn" aria-label="Collapse sidebar">‹</button>
       </div>
 
-      <div class="detailbar hidden" id="detailBar"></div>
+      <div class="sidebar-section" id="divisionSection">
+        <span class="side-label">Division</span>
+        <select class="side-select" id="divisionSelect"></select>
+      </div>
 
-      <div class="stats" id="stats"></div>
+      <nav class="sidebar-nav" id="sidebarNav" aria-label="Views">
+        <button class="nav-item" data-mode="standings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" aria-hidden="true">
+            <line x1="4" y1="20" x2="4" y2="11"></line>
+            <line x1="10" y1="20" x2="10" y2="4"></line>
+            <line x1="16" y1="20" x2="16" y2="14"></line>
+            <line x1="20" y1="20" x2="20" y2="8"></line>
+          </svg>
+          <span class="nav-label">Standings</span>
+        </button>
+        <button class="nav-item" data-mode="h2h">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7 L10 12 L4 17"></path>
+            <path d="M20 7 L14 12 L20 17"></path>
+          </svg>
+          <span class="nav-label">Head-to-Head</span>
+        </button>
+      </nav>
 
-      <div class="table-card" id="tableCard">
-        <div class="table-scroll">
-          <table id="table">
-            <thead id="thead"></thead>
-            <tbody id="tbody"></tbody>
-          </table>
+      <div class="sidebar-foot">
+        <div class="meta" id="fetchedMeta"></div>
+        <div class="foot-actions">
+          <button class="btn btn-secondary btn-sm" id="refreshBtn">Refresh</button>
+          <button class="btn btn-ghost btn-sm" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
         </div>
-        <div class="empty hidden" id="emptyState">Nothing to show.</div>
       </div>
+    </aside>
 
-      <div id="insights" class="hidden"></div>
+    <!-- ===== Main content ===== -->
+    <main class="main" id="main">
+      <div id="topProgress" class="top-progress hidden"><div class="bar" id="topBar"></div></div>
 
-      <div id="emptyApp" class="empty-app hidden">
-        <p>No data loaded yet.</p>
-        <p class="sub">Hit <b>Refresh</b> to pull the latest standings, or wait for the daily update.</p>
+      <div class="container">
+        <div id="h2h" class="hidden"></div>
+
+        <div class="controls" id="controls">
+          <div class="control-group" id="bracketGroup">
+            <span>Bracket</span>
+            <div class="segmented" id="bracketSeg" role="tablist"></div>
+          </div>
+          <div class="spacer"></div>
+          <div class="control-group">
+            <span>&nbsp;</span>
+            <div id="colMenuWrap" class="col-wrap"></div>
+          </div>
+          <div class="control-group">
+            <span>&nbsp;</span>
+            <button class="btn btn-primary btn-sm" id="csvBtn">Export CSV</button>
+          </div>
+        </div>
+
+        <div class="detailbar hidden" id="detailBar"></div>
+
+        <div class="stats" id="stats"></div>
+
+        <div class="table-card" id="tableCard">
+          <div class="table-scroll">
+            <table id="table">
+              <thead id="thead"></thead>
+              <tbody id="tbody"></tbody>
+            </table>
+          </div>
+          <div class="empty hidden" id="emptyState">Nothing to show.</div>
+        </div>
+
+        <div id="insights" class="hidden"></div>
+
+        <div id="emptyApp" class="empty-app hidden">
+          <p>No data loaded yet.</p>
+          <p class="sub">Hit <b>Refresh</b> to pull the latest standings, or wait for the daily update.</p>
+        </div>
       </div>
-    </div>
+    </main>
   </section>
 
   <script src="app.js"></script>

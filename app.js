@@ -44,7 +44,8 @@ const state = {
   refreshing: false,
   hiddenCols: new Set(),   // column keys the user chose to hide
   mode: "standings",       // "standings" | "h2h"
-  h2h: { league: null, a: null, b: null, basis: "fargo" },  // basis: "fargo" | "form"
+  h2h: { a: null, b: null, basis: "fargo" },  // basis: "fargo" | "form"; league = global state.league
+  collapsed: false,
 };
 
 // ---- storage helpers -----------------------------------------------------
@@ -56,6 +57,8 @@ const store = {
   saveTheme(t) { try { localStorage.setItem("pal.theme", t); } catch (_) {} },
   hiddenCols() { try { return new Set(JSON.parse(localStorage.getItem("pal.hiddenCols") || "[]")); } catch (_) { return new Set(); } },
   saveHiddenCols(set) { try { localStorage.setItem("pal.hiddenCols", JSON.stringify([...set])); } catch (_) {} },
+  collapsed() { try { return localStorage.getItem("pal.collapsed") === "1"; } catch (_) { return false; } },
+  saveCollapsed(v) { try { localStorage.setItem("pal.collapsed", v ? "1" : "0"); } catch (_) {} },
 };
 
 // ---- theme ---------------------------------------------------------------
@@ -239,22 +242,29 @@ function relAge(iso) {
 }
 
 
-// ---- standings view ------------------------------------------------------
-function renderLeagueSeg() {
-  const seg = $("#leagueSeg"); seg.innerHTML = "";
-  state.data.order.forEach((key) => {
-    if (!state.data.leagues[key]) return;
-    const btn = document.createElement("button");
-    btn.textContent = state.data.leagues[key].name;
-    btn.setAttribute("role", "tab");
-    btn.setAttribute("aria-selected", key === state.league);
-    btn.onclick = () => {
-      if (state.league === key) return;
-      state.league = key; pickDefaultBracket();
-      renderLeagueSeg(); renderAll();
+// ---- sidebar navigation --------------------------------------------------
+function renderSidebar() {
+  // division selector
+  const sel = $("#divisionSelect");
+  if (sel) {
+    sel.innerHTML = state.data.order.map((key) =>
+      `<option value="${key}"${key === state.league ? " selected" : ""}>${escapeHtml(state.data.leagues[key].name)}</option>`).join("");
+    sel.onchange = (e) => {
+      state.league = e.target.value;
+      pickDefaultBracket();
+      state.h2h.a = null; state.h2h.b = null;
+      renderAll();
     };
-    seg.appendChild(btn);
+  }
+  // nav items
+  document.querySelectorAll("#sidebarNav .nav-item").forEach((b) => {
+    b.setAttribute("aria-current", state.mode === b.dataset.mode ? "page" : "false");
+    b.onclick = () => { if (state.mode !== b.dataset.mode) { state.mode = b.dataset.mode; renderAll(); } };
   });
+  // collapse
+  $("#app").classList.toggle("collapsed", state.collapsed);
+  const cb = $("#collapseBtn");
+  if (cb) cb.onclick = () => { state.collapsed = !state.collapsed; store.saveCollapsed(state.collapsed); $("#app").classList.toggle("collapsed", state.collapsed); };
 }
 
 function renderBracketSeg() {
@@ -543,7 +553,7 @@ function renderDetailBar() {
   $("#detailCsvBtn").onclick = exportDetailCsv;
   $("#compareBtn").onclick = () => {
     state.mode = "h2h";
-    state.h2h.league = state.detail.league || state.league;
+    state.league = state.detail.league || state.league;
     state.h2h.a = state.detail.teamId; state.h2h.b = null;
     renderAll();
   };
@@ -787,19 +797,13 @@ function playerOptions(players, selectedId) {
 
 function renderH2H() {
   const box = $("#h2h");
-  const order = state.data.order;
-  if (!state.h2h.league || !state.data.leagues[state.h2h.league]) state.h2h.league = state.league || order[0];
-  const league = state.h2h.league;
+  const league = state.league;
   const players = leaguePlayers(league);
-  const leagueSeg = order.map((k) =>
-    `<button role="tab" aria-selected="${k === league}" data-league="${k}">${escapeHtml(state.data.leagues[k].name)}</button>`).join("");
   box.innerHTML =
     `<div class="controls">` +
-      `<div class="control-group"><span>League</span><div class="segmented" id="h2hLeagueSeg">${leagueSeg}</div></div>` +
-      `<div class="spacer"></div>` +
       `<div class="control-group"><span>Rate by</span><div class="segmented" id="h2hBasis">` +
         `<button data-basis="fargo" aria-selected="${state.h2h.basis === "fargo"}">Fargo</button>` +
-        `<button data-basis="form" aria-selected="${state.h2h.basis === "form"}">Season form</button>` +
+        `<button data-basis="form" aria-selected="${state.h2h.basis === "form"}">Season Form</button>` +
       `</div></div>` +
     `</div>` +
     `<div class="h2h-pickers">` +
@@ -808,9 +812,6 @@ function renderH2H() {
       `<select class="h2h-select" id="h2hB"><option value="">Select player…</option>${playerOptions(players, state.h2h.b)}</select>` +
     `</div>` +
     `<div id="h2hResult"></div>`;
-  $("#h2hLeagueSeg").querySelectorAll("button").forEach((b) => b.onclick = () => {
-    state.h2h.league = b.dataset.league; state.h2h.a = null; state.h2h.b = null; renderH2H();
-  });
   $("#h2hBasis").querySelectorAll("button").forEach((b) => b.onclick = () => {
     state.h2h.basis = b.dataset.basis; renderH2H();
   });
@@ -824,7 +825,7 @@ function h2hCardHTML(p, colorClass) {
   const arrow = pa == null || f == null ? "" :
     pa > f ? '<span class="pa-cell up">▲</span>' : pa < f ? '<span class="pa-cell down">▼</span>' : "";
   const brLabel = p.bracket.length === 1 ? "Bracket " + p.bracket : p.bracket;
-  const rank = rankOf(state.h2h.league, p.bracket, p.team_id);
+  const rank = rankOf(state.league, p.bracket, p.team_id);
   return `<div class="h2h-card">` +
     `<div class="h2h-name"><span class="dot ${colorClass}"></span>${escapeHtml(p.name)}</div>` +
     `<div class="h2h-sub">${escapeHtml(brLabel)}${rank ? ` · Rank ${rank}` : ""}</div>` +
@@ -837,7 +838,8 @@ function h2hCardHTML(p, colorClass) {
 
 function renderH2HResult() {
   const el = $("#h2hResult"); if (!el) return;
-  const { a, b, league, basis } = state.h2h;
+  const { a, b, basis } = state.h2h;
+  const league = state.league;
   if (!a || !b) { el.innerHTML = `<div class="panel"><p class="caption">Pick two players to see the matchup.</p></div>`; return; }
   if (a === b) { el.innerHTML = `<div class="panel"><p class="caption">Pick two different players.</p></div>`; return; }
   const pa = findPlayer(league, a), pb = findPlayer(league, b);
@@ -895,13 +897,19 @@ function renderH2HResult() {
   el.innerHTML =
     `<div class="h2h-compare">${h2hCardHTML(pa, "cA")}<div class="h2h-mid">VS</div>${h2hCardHTML(pb, "cB")}</div>` +
     `<div class="panel">` +
+      `<div class="race-banner">` +
+        `<span class="race-tag">RACE TO 7</span>` +
+        `<span class="race-text">${m.spot === 0
+          ? "Even — no games on the wire"
+          : `${escapeHtml(lowerName)} gets <b>${m.spot}</b> game${m.spot > 1 ? "s" : ""} on the wire`}</span>` +
+        `<span class="race-detail">${escapeHtml(higherName)} needs 7 · ${escapeHtml(lowerName)} needs ${7 - m.spot}</span>` +
+      `</div>` +
       `<p class="panel-title">Win probability ${info("h2hp",
-        `Each game is won by the higher-rated player with chance <b>2^(Δ/100)/(1+2^(Δ/100))</b> from the Fargo gap. The match is a race to 7 with the lower player spotted per PAL's table (Δ 1–50→0, 51–100→1, 101–150→2, 151–225→3, 226+→4). Probabilities come from that race. ${SRC}`)}${basisNote}</p>` +
+        `Each game is won by the higher-rated player with chance <b>2^(Δ/100)/(1+2^(Δ/100))</b> from the Fargo gap. The match is a race to 7 with the lower player spotted per PAL's table (Δ 1–50→0, 51–100→1, 101–150→2, 151–225→3, 226+→4). The win % and every scoreline below already include those spotted games. ${SRC}`)}${basisNote}</p>` +
       `<div class="meter-track"><span class="meter-a" style="width:${aPct}%"></span><span class="meter-b" style="width:${bPct}%"></span></div>` +
       `<div class="meter-labels"><span><span class="dot cA"></span>${escapeHtml(pa.name)} ${aPct}%</span>` +
         `<span>${bPct}% ${escapeHtml(pb.name)}<span class="dot cB"></span></span></div>` +
       `<p class="verdict-line">${escapeHtml(favName)} is ${verdict}${useForm ? ", by this season's form" : ""}.</p>` +
-      `<p class="caption">Race to 7 · Fargo gap ${m.delta} → ${escapeHtml(lowerName)} spotted <b>${m.spot}</b> on the wire (${escapeHtml(higherName)} needs 7, ${escapeHtml(lowerName)} needs ${7 - m.spot}).</p>` +
     `</div>` +
     `<div class="panel"><p class="panel-title">Possible results ${info("h2hs",
       `Every final score that can happen in this race, with its probability. The spot compresses the favorite's range (they can't win by more than 7–${m.spot}). ${SRC}`)}</p>` +
@@ -911,27 +919,14 @@ function renderH2HResult() {
 }
 
 // ---- view switch ---------------------------------------------------------
-function renderModeSwitch() {
-  const seg = $("#modeSwitch"); if (!seg) return;
-  const modes = [["standings", "Standings"], ["h2h", "Head-to-Head"]];
-  seg.innerHTML = modes.map(([k, l]) =>
-    `<button role="tab" aria-selected="${state.mode === k}" data-mode="${k}">${l}</button>`).join("");
-  seg.querySelectorAll("button").forEach((b) => b.onclick = () => {
-    if (state.mode === b.dataset.mode) return;
-    state.mode = b.dataset.mode;
-    if (state.mode === "h2h" && !state.h2h.league) state.h2h.league = state.league || state.data.order[0];
-    renderAll();
-  });
-}
-
 function renderAll() {
   updateFreshness(); updateRefreshButton();
   const hasData = state.data && state.data.order && state.data.order.length > 0;
   const SECTIONS = ["#controls", "#stats", "#detailBar", "#tableCard", "#insights", "#h2h"];
   $("#emptyApp").classList.toggle("hidden", hasData);
-  $("#modeSwitchWrap").classList.toggle("hidden", !hasData);
+  $("#sidebar").classList.toggle("hidden", !hasData);
   if (!hasData) { SECTIONS.forEach((s) => $(s).classList.add("hidden")); return; }
-  renderModeSwitch();
+  renderSidebar();
 
   if (state.mode === "h2h") {
     ["#controls", "#stats", "#detailBar", "#tableCard", "#insights"].forEach((s) => $(s).classList.add("hidden"));
@@ -948,7 +943,7 @@ function renderAll() {
   $("#tableCard").classList.toggle("hidden", insights);
   $("#insights").classList.toggle("hidden", !insights);
   if (standings) {
-    renderLeagueSeg(); renderBracketSeg(); renderColumnMenu();
+    renderBracketSeg(); renderColumnMenu();
     renderStats(); renderStandingsTable();
   } else {
     renderDetailBar();
@@ -1001,6 +996,7 @@ function exportDetailCsv() {
 (async function boot() {
   initTheme();
   state.hiddenCols = store.hiddenCols();
+  state.collapsed = store.collapsed();
   // paint the cached snapshot instantly, then pull the latest from the server
   const cached = store.cachedData();
   if (cached && cached.order) onData(cached);
