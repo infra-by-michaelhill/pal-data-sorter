@@ -200,8 +200,14 @@ def _strip(html):
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", " ", html)).strip()
 
 
+def _team_key(name):
+    # order-insensitive identity: scotch teams appear with members in either
+    # order ("ED A./BRANDON Y." vs "BRANDON Y./ED A."), so match by member set.
+    return frozenset(re.sub(r"\s+", " ", p).strip().upper() for p in name.split("/") if p.strip())
+
+
 def parse_matches(html, subject_name):
-    subj = re.sub(r"\s+", " ", subject_name).strip().upper()
+    subj_key = _team_key(subject_name)
     matches, subj_fargo = [], None
 
     for card in html.split('<div class="match-card')[1:]:
@@ -232,13 +238,12 @@ def parse_matches(html, subject_name):
         dm = re.search(r'class="date hidden[^"]*">\s*Date:\s*([^<]+)<', card)
         date_label = dm.group(1).strip() if dm else None
 
-        if lname.upper() == subj:
-            opp_name, opp_f, my, opp, my_f = rname, rf, lscore, rscore, lf
-            my_bp, opp_bp = lbp or 0, rbp or 0
-        elif rname.upper() == subj:
+        if _team_key(rname) == subj_key and _team_key(lname) != subj_key:
+            # subject is on the right
             opp_name, opp_f, my, opp, my_f = lname, lf, rscore, lscore, rf
             my_bp, opp_bp = rbp or 0, lbp or 0
         else:
+            # subject is on the left (exact/member match) or fallback
             opp_name, opp_f, my, opp, my_f = rname, rf, lscore, rscore, lf
             my_bp, opp_bp = lbp or 0, rbp or 0
 

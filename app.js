@@ -275,7 +275,13 @@ function renderSidebar() {
   // nav items
   document.querySelectorAll("#sidebarNav .nav-item").forEach((b) => {
     b.setAttribute("aria-current", state.mode === b.dataset.mode ? "page" : "false");
-    b.onclick = () => { if (state.mode !== b.dataset.mode) { state.mode = b.dataset.mode; renderAll(); } };
+    b.onclick = () => {
+      const target = b.dataset.mode;
+      // a top-level nav click always lands on that view's default
+      if (target === "standings") { state.view = "standings"; state.detail = null; }
+      state.mode = target;
+      renderAll();
+    };
   });
   // collapse
   $("#app").classList.toggle("collapsed", state.collapsed);
@@ -480,14 +486,18 @@ function _comb(n, k) {
   return r;
 }
 
-// Full result distribution for a race to 7 with a spot, given two ratings.
-// Returns { higher:'A'|'B', delta, spot, pGame, aWin, bWin, results:[{a,b,winner,prob}], modal }
-function matchup(rA, rB) {
-  const delta = Math.abs(rA - rB);
+// Full result distribution for a race to 7 with a spot.
+// The RACE (who's spotted, and by how much) is ALWAYS set by the actual Fargos
+// (offA/offB) — that's the real handicap. The per-game odds use ratA/ratB, which
+// may be the players' season form; so "season form" only shifts the odds, not
+// the race. Returns { higher:'A'|'B', delta, spot, pGame, aWin, bWin, results, modal }
+function matchup(offA, offB, ratA, ratB) {
+  const delta = Math.abs(offA - offB);
   const spot = FARGO.spot(delta);
-  const higher = rA >= rB ? "A" : "B";
-  const hr = Math.max(rA, rB), lr = Math.min(rA, rB);
-  const p = FARGO.pGame(hr, lr);           // per-game win prob for the favorite
+  const higher = offA >= offB ? "A" : "B";  // the un-spotted player (needs 7)
+  const rHi = higher === "A" ? ratA : ratB;
+  const rLo = higher === "A" ? ratB : ratA;
+  const p = FARGO.pGame(rHi, rLo);          // favorite's per-game win prob (by chosen basis)
   const need = 7 - spot;                    // on-table wins the underdog needs
   const rows = [];
   // favorite wins: underdog gets j on-table games (j = 0 .. need-1)
@@ -593,6 +603,7 @@ function renderDetailBar() {
     state.mode = "h2h";
     state.league = state.detail.league || state.league;
     state.h2h.a = state.detail.teamId; state.h2h.b = null;
+    state.h2h.basis = "fargo";   // a fresh comparison starts from actual Fargo
     renderAll();
   };
   bar.querySelectorAll(".tabs button").forEach((b) => {
@@ -893,7 +904,7 @@ function renderH2HResult() {
     return;
   }
 
-  const m = matchup(rA, rB);
+  const m = matchup(fa, fb, rA, rB);   // race from actual Fargos; odds from chosen basis
   const aPct = Math.round(m.aWin * 100), bPct = 100 - aPct;
   const favPct = Math.max(aPct, bPct);
   const favName = m.aWin >= 0.5 ? pa.name : pb.name;
