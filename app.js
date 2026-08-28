@@ -42,6 +42,7 @@ const state = {
   detailSort: { key: "dateISO", dir: "asc" },
   granular: { loaded: false, byId: {}, fetchedAt: null },
   refreshing: false,
+  hiddenCols: new Set(),   // column keys the user chose to hide
 };
 
 // ---- storage helpers -----------------------------------------------------
@@ -51,6 +52,8 @@ const store = {
   cachedData() { try { return JSON.parse(sessionStorage.getItem("pal.snapshot") || "null"); } catch (_) { return null; } },
   theme() { try { return localStorage.getItem("pal.theme"); } catch (_) { return null; } },
   saveTheme(t) { try { localStorage.setItem("pal.theme", t); } catch (_) {} },
+  hiddenCols() { try { return new Set(JSON.parse(localStorage.getItem("pal.hiddenCols") || "[]")); } catch (_) { return new Set(); } },
+  saveHiddenCols(set) { try { localStorage.setItem("pal.hiddenCols", JSON.stringify([...set])); } catch (_) {} },
 };
 
 // ---- theme ---------------------------------------------------------------
@@ -272,8 +275,16 @@ function renderBracketSeg() {
   });
 }
 
-function standingsColumns() {
+function standingsColumnsAll() {
   return state.granular.loaded ? BASE_COLUMNS.concat(GRANULAR_COLUMNS) : BASE_COLUMNS.slice();
+}
+// visible columns = all minus the ones the user hid (# and Player always stay)
+function standingsColumns() {
+  return standingsColumnsAll().filter((c) => !state.hiddenCols.has(c.key));
+}
+// columns the user is allowed to hide, in display order
+function toggleableColumns() {
+  return standingsColumnsAll().filter((c) => c.key !== "rank" && c.key !== "name");
 }
 
 function currentRows() {
@@ -293,7 +304,7 @@ function currentRows() {
       return { ...r, fargo: g ? g.fargo : null, avgOpp: g ? g.avgOpp : null };
     });
   }
-  return sortRows(rows, state.sort, standingsColumns());
+  return sortRows(rows, state.sort, standingsColumnsAll());  // sort works even if that column is hidden
 }
 
 function standingsCell(r, c, i) {
@@ -321,6 +332,40 @@ function renderStandingsTable() {
     extraCols: extra,
   });
 }
+
+// ---- column filter -------------------------------------------------------
+function renderColumnMenu() {
+  const wrap = $("#colMenuWrap"); if (!wrap) return;
+  const cols = toggleableColumns();
+  const hiddenCount = cols.filter((c) => state.hiddenCols.has(c.key)).length;
+  const label = hiddenCount ? `Columns (${cols.length - hiddenCount}/${cols.length})` : "Columns";
+  wrap.innerHTML =
+    `<button class="btn btn-secondary btn-sm" id="colBtn" aria-haspopup="true">${label} ▾</button>` +
+    `<div class="col-menu hidden" id="colMenu">` +
+      `<div class="col-menu-head">Show columns</div>` +
+      cols.map((c) =>
+        `<label class="col-opt"><input type="checkbox" data-key="${c.key}"` +
+        `${state.hiddenCols.has(c.key) ? "" : " checked"}> ${escapeHtml(c.label)}</label>`).join("") +
+      `<button class="col-menu-all" id="colAll">Show all</button>` +
+    `</div>`;
+  const menu = $("#colMenu");
+  $("#colBtn").onclick = (e) => { e.stopPropagation(); menu.classList.toggle("hidden"); };
+  menu.querySelectorAll("input[type=checkbox]").forEach((cb) => {
+    cb.onchange = () => {
+      if (cb.checked) state.hiddenCols.delete(cb.dataset.key);
+      else state.hiddenCols.add(cb.dataset.key);
+      store.saveHiddenCols(state.hiddenCols);
+      renderStandingsTable(); renderColumnMenu(); $("#colMenu").classList.remove("hidden");
+    };
+  });
+  $("#colAll").onclick = () => {
+    state.hiddenCols.clear(); store.saveHiddenCols(state.hiddenCols);
+    renderStandingsTable(); renderColumnMenu(); $("#colMenu").classList.remove("hidden");
+  };
+}
+document.addEventListener("click", (e) => {
+  if (!e.target.closest("#colMenuWrap")) { const m = $("#colMenu"); if (m) m.classList.add("hidden"); }
+});
 
 function renderStats() {
   const rows = currentRows(), rated = rows.filter((r) => r.MP > 0);
@@ -657,7 +702,7 @@ function renderAll() {
   $("#tableCard").classList.toggle("hidden", insights);
   $("#insights").classList.toggle("hidden", !insights);
   if (standings) {
-    renderLeagueSeg(); renderBracketSeg();
+    renderLeagueSeg(); renderBracketSeg(); renderColumnMenu();
     renderStats(); renderStandingsTable();
   } else {
     renderDetailBar();
@@ -709,6 +754,7 @@ function exportDetailCsv() {
 // ---- boot ----------------------------------------------------------------
 (async function boot() {
   initTheme();
+  state.hiddenCols = store.hiddenCols();
   // paint the cached snapshot instantly, then pull the latest from the server
   const cached = store.cachedData();
   if (cached && cached.order) onData(cached);

@@ -145,7 +145,9 @@ body {
 .empty-app p { margin: 0 0 6px; font-size: 1.1rem; font-weight: 600; }
 .empty-app .sub { font-size: 0.9rem; font-weight: 400; color: hsl(var(--subtle)); }
 
-.container { max-width: 1100px; margin: 0 auto; padding: 24px 22px 60px; }
+/* wider so the full column set fits without scrolling on large screens;
+   compact screens fall back to the table's own horizontal scroll */
+.container { max-width: 1280px; margin: 0 auto; padding: 24px 22px 60px; }
 
 .controls {
   display: flex; flex-wrap: wrap; align-items: center; gap: 20px 28px;
@@ -171,6 +173,22 @@ body {
 
 .spacer { flex: 1; }
 
+/* Column filter menu */
+.col-wrap { position: relative; }
+.col-menu { position: absolute; z-index: 20; top: calc(100% + 6px); right: 0;
+            min-width: 200px; background: hsl(var(--surface)); border: 1px solid hsl(var(--border));
+            border-radius: 10px; box-shadow: var(--shadow); padding: 8px; }
+.col-menu-head { font-size: 0.7rem; font-weight: 700; letter-spacing: 0.05em;
+                 text-transform: uppercase; color: hsl(var(--subtle)); padding: 4px 8px 6px; }
+.col-opt { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 7px;
+           font-size: 0.88rem; color: hsl(var(--fg)); cursor: pointer; }
+.col-opt:hover { background: hsl(var(--surface-2)); }
+.col-opt input { width: 15px; height: 15px; accent-color: hsl(var(--accent)); }
+.col-menu-all { width: 100%; margin-top: 6px; border: 0; border-top: 1px solid hsl(var(--border));
+                background: transparent; color: hsl(var(--accent)); font: inherit; font-weight: 600;
+                font-size: 0.82rem; padding: 8px 8px 4px; text-align: left; cursor: pointer; }
+.col-menu-all:hover { color: hsl(var(--accent-strong)); }
+
 /* Stat tiles */
 .stats { display: flex; flex-wrap: wrap; gap: 14px; margin-bottom: 20px; }
 .stat { flex: 1 1 150px; background: hsl(var(--surface)); border: 1px solid hsl(var(--border));
@@ -189,14 +207,14 @@ thead th {
   position: sticky; top: 0; background: hsl(var(--surface-2));
   font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.04em;
   color: hsl(var(--muted)); font-weight: 700; text-align: right;
-  padding: 11px 14px; white-space: nowrap; cursor: pointer; user-select: none;
+  padding: 10px 12px; white-space: nowrap; cursor: pointer; user-select: none;
   border-bottom: 1px solid hsl(var(--border));
 }
 thead th:hover { color: hsl(var(--fg)); }
 thead th.text, tbody td.text { text-align: left; }
 thead th .arrow { color: hsl(var(--accent)); font-size: 0.7rem; margin-left: 3px; }
 thead th[aria-sort="none"] .arrow { opacity: 0; }
-tbody td { padding: 9px 14px; text-align: right; white-space: nowrap;
+tbody td { padding: 9px 12px; text-align: right; white-space: nowrap;
            font-variant-numeric: tabular-nums; border-bottom: 1px solid hsl(var(--border)); }
 tbody tr:last-child td { border-bottom: 0; }
 tbody tr:nth-child(even) { background: hsl(var(--surface-2) / 0.45); }
