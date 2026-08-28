@@ -382,11 +382,13 @@ document.addEventListener("click", (e) => {
 function renderStats() {
   const rows = currentRows(), rated = rows.filter((r) => r.MP > 0);
   const avg = (arr, k) => arr.length ? (arr.reduce((s, r) => s + r[k], 0) / arr.length) : 0;
+  const rf = rows.filter((r) => r.fargo != null);
+  const avgFargo = rf.length ? Math.round(avg(rf, "fargo")) : "—";
   const tiles = [
     { k: "Players", v: rows.length },
     { k: "Avg Points", v: avg(rated, "GP").toFixed(1) },
     { k: "Avg Pts / Match", v: avg(rated, "GPMP").toFixed(2) },
-    { k: "Avg Win %", v: avg(rated, "winPct").toFixed(1) + "%" },
+    { k: "Avg Fargo", v: avgFargo },
   ];
   $("#stats").innerHTML = tiles.map((t) =>
     `<div class="stat"><div class="k">${t.k}</div><div class="v">${t.v}</div></div>`).join("");

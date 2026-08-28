@@ -126,7 +126,7 @@ body {
 .sidebar {
   width: 240px; flex-shrink: 0; position: sticky; top: 0; height: 100vh;
   display: flex; flex-direction: column; gap: 6px;
-  background: hsl(var(--surface)); border-right: 1px solid hsl(var(--border));
+  background: hsl(var(--bg)); border-right: 1px solid hsl(var(--border));
   padding: 16px 12px; overflow: hidden;
 }
 .sidebar-top { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 10px; }
@@ -140,7 +140,7 @@ body {
 .side-label { font-size: 0.68rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase;
   color: hsl(var(--subtle)); }
 .side-select { width: 100%; height: 38px; padding: 0 10px; border-radius: 9px;
-  border: 1px solid hsl(var(--border)); background: hsl(var(--bg)); color: hsl(var(--fg));
+  border: 1px solid hsl(var(--border)); background: hsl(var(--surface)); color: hsl(var(--fg));
   font: inherit; font-size: 0.9rem; font-weight: 600; }
 .side-select:focus { border-color: hsl(var(--accent)); outline: none; }
 
