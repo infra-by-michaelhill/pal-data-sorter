@@ -45,7 +45,7 @@ const state = {
   hiddenCols: new Set(),   // column keys the user chose to hide
   mode: "standings",       // "standings" | "schedule" | "h2h" | "leaderboard"
   h2h: { a: null, b: null, basis: "fargo" },  // basis: "fargo" | "form"; league = global state.league
-  schedule: { weekStart: null, q: "" },   // ms of the shown week (null = live edge); q = name filter
+  schedule: { weekStart: null, filters: [] },   // shown week (null = live edge); filters = [{tid,name}]
   collapsed: false,
 };
 
@@ -287,7 +287,7 @@ function renderScope(container) {
     if (k !== state.league) {
       state.league = k; pickDefaultBracket();
       state.h2h.a = null; state.h2h.b = null;
-      state.schedule.weekStart = null; state.schedule.q = "";
+      state.schedule.weekStart = null; state.schedule.filters = [];
       renderAll();
     }
   });
@@ -326,6 +326,7 @@ function renderSidebar() {
 }
 document.addEventListener("click", (e) => {
   if (!e.target.closest(".scope-switch")) document.querySelectorAll(".scope-menu").forEach((m) => m.classList.add("hidden"));
+  if (!e.target.closest("#schFilter")) { const m = document.getElementById("pfMenu"); if (m) m.classList.add("hidden"); }
 });
 
 function renderBracketSeg() {
@@ -1082,18 +1083,105 @@ function schMatchHTML(m) {
 function wireSchBracket(box) {
   const seg = box.querySelector("#schBracket");
   if (seg) seg.querySelectorAll("button").forEach((b) => b.onclick = () => {
-    state.bracket = b.dataset.b; state.schedule.weekStart = null; renderSchedule();
+    state.bracket = b.dataset.b;
+    state.schedule.weekStart = null; state.schedule.filters = [];   // scope changed
+    renderSchedule();
   });
 }
 
-// fuzzy: every typed term must appear in one player's name (first or last), on either side
-function schMatchesQuery(m, terms) {
-  const hit = (name) => { const n = String(name).toLowerCase(); return terms.every((t) => n.includes(t)); };
-  return hit(m.aName) || hit(m.bName);
+// ---- Schedule player filter: multi-select combobox, OR semantics ---------
+function playersForScope() {                       // players eligible for the current bracket view
+  const labels = bracketsFor(state.league);
+  let players = leaguePlayers(state.league);
+  if (labels.length > 1 && state.bracket !== "__both__") players = players.filter((p) => p.bracket === state.bracket);
+  return players;
+}
+function schPassesFilter(m) {                       // OR across the selected players (empty = all)
+  const f = state.schedule.filters;
+  return !f.length || f.some((x) => x.tid === m.aTid || x.tid === m.bTid);
+}
+// optimal string alignment distance (Levenshtein + adjacent transposition)
+function editDist(a, b) {
+  const al = a.length, bl = b.length;
+  if (!al) return bl; if (!bl) return al;
+  const d = Array.from({ length: al + 1 }, () => new Array(bl + 1).fill(0));
+  for (let i = 0; i <= al; i++) d[i][0] = i;
+  for (let j = 0; j <= bl; j++) d[0][j] = j;
+  for (let i = 1; i <= al; i++) for (let j = 1; j <= bl; j++) {
+    const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+    d[i][j] = Math.min(d[i - 1][j] + 1, d[i][j - 1] + 1, d[i - 1][j - 1] + cost);
+    if (i > 1 && j > 1 && a[i - 1] === b[j - 2] && a[i - 2] === b[j - 1]) d[i][j] = Math.min(d[i][j], d[i - 2][j - 2] + 1);
+  }
+  return d[al][bl];
+}
+// a term matches a name token as a typo-tolerant prefix. Short terms must match
+// exactly (so "hi" hits "hill", not "michael"); longer terms tolerate 1–2 typos
+// (so "michael" still finds the misspelled "MICHEAL").
+function fuzzyPrefix(term, token) {
+  if (token.startsWith(term)) return true;
+  const thresh = term.length <= 4 ? 0 : term.length <= 7 ? 1 : 2;
+  if (thresh === 0) return false;
+  return editDist(term, token.slice(0, term.length)) <= thresh;
+}
+// every typed word must match some name token (first OR last), across either player
+function nameMatchesTerms(name, terms) {
+  const tokens = name.toLowerCase().split(/[\s/.]+/).filter(Boolean);
+  return terms.every((t) => tokens.some((tok) => fuzzyPrefix(t, tok)));
+}
+function menuPlayers() {
+  const inp = $("#schSearch");
+  const terms = (inp ? inp.value : "").trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const chosen = new Set(state.schedule.filters.map((f) => f.tid));
+  let list = playersForScope().filter((p) => !chosen.has(p.team_id));
+  if (terms.length) list = list.filter((p) => nameMatchesTerms(p.name, terms));
+  return list.sort((a, b) => a.name.localeCompare(b.name)).slice(0, 60);
+}
+function addFilter(tid) {
+  if (state.schedule.filters.some((f) => f.tid === tid)) return;
+  const p = findPlayer(state.league, tid);
+  if (!p) return;
+  state.schedule.filters.push({ tid, name: p.name });
+  const inp = $("#schSearch"); if (inp) inp.value = "";
+  renderSchChips(); renderSchMenu(true); renderScheduleBody();
+  if (inp) inp.focus();
+}
+function removeFilter(tid) {
+  state.schedule.filters = state.schedule.filters.filter((f) => f.tid !== tid);
+  renderSchChips(); renderSchMenu(true); renderScheduleBody();
+  const inp = $("#schSearch"); if (inp) inp.focus();
+}
+function renderSchChips() {
+  const boxEl = $("#pfBox"), inp = $("#schSearch");
+  if (!boxEl || !inp) return;
+  boxEl.querySelectorAll(".pf-chip").forEach((c) => c.remove());
+  state.schedule.filters.forEach((f) => {
+    const chip = document.createElement("span");
+    chip.className = "pf-chip";
+    chip.innerHTML = `${escapeHtml(f.name)}<button class="pf-x" aria-label="Remove ${escapeHtml(f.name)}">×</button>`;
+    chip.querySelector(".pf-x").onclick = (e) => { e.stopPropagation(); removeFilter(f.tid); };
+    boxEl.insertBefore(chip, inp);
+  });
+  inp.placeholder = state.schedule.filters.length ? "Add another player…" : "Filter by player name…";
+}
+function renderSchMenu(open) {
+  const menu = $("#pfMenu"); if (!menu) return;
+  if (open === false) { menu.classList.add("hidden"); return; }
+  const list = menuPlayers();
+  const showBr = bracketsFor(state.league).length > 1 && state.bracket === "__both__";
+  menu.innerHTML = list.length
+    ? list.map((p) => {
+        const f = fargoFor(p.team_id);
+        const br = showBr ? `<span class="pf-br">${escapeHtml(p.bracket.length === 1 ? "Br " + p.bracket : p.bracket)}</span>` : "";
+        return `<button class="pf-item" data-tid="${p.team_id}"><span class="pf-item-name">${escapeHtml(p.name)}</span>` +
+          `<span class="pf-item-meta">${br}${f != null ? `<span>${f}</span>` : ""}</span></button>`;
+      }).join("")
+    : `<div class="pf-empty">No players found</div>`;
+  menu.classList.remove("hidden");
+  menu.querySelectorAll(".pf-item").forEach((it) => it.onclick = () => addFilter(+it.dataset.tid));
 }
 
-// The shell (bracket toggle + search box) is rendered once so the search input
-// keeps focus; only the body re-renders as you type or page between weeks.
+// The shell (bracket toggle + filter combobox) renders once so the input keeps
+// focus; chips, menu, and body update on their own as you filter or page weeks.
 function renderSchedule() {
   const box = $("#schedule");
   const labels = bracketsFor(state.league);
@@ -1107,53 +1195,59 @@ function renderSchedule() {
       `</div></div></div>`;
   }
 
-  const searchIc = '<svg class="sch-search-ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/></svg>';
-  const search = `<div class="sch-searchwrap">${searchIc}` +
-    `<input type="search" id="schSearch" class="sch-search" placeholder="Search by player name…" autocomplete="off" value="${escapeHtml(state.schedule.q || "")}">` +
+  const combo = `<div class="pf" id="schFilter">` +
+      `<div class="pf-box" id="pfBox">` +
+        `<input type="text" id="schSearch" class="pf-input" autocomplete="off" role="combobox" aria-autocomplete="list" placeholder="Filter by player name…">` +
+      `</div>` +
+      `<div class="pf-menu hidden" id="pfMenu" role="listbox"></div>` +
     `</div>`;
+  box.innerHTML = bracketBar + combo + `<div id="schBody"></div>`;
 
-  box.innerHTML = bracketBar + search + `<div id="schBody"></div>`;
   wireSchBracket(box);
-  const inp = $("#schSearch");
-  if (inp) inp.oninput = () => { state.schedule.q = inp.value; renderScheduleBody(); };
+  const inp = $("#schSearch"), boxEl = $("#pfBox");
+  if (inp) {
+    inp.oninput = () => renderSchMenu(true);
+    inp.onfocus = () => renderSchMenu(true);
+    inp.onkeydown = (e) => {
+      if (e.key === "Backspace" && !inp.value && state.schedule.filters.length) {
+        removeFilter(state.schedule.filters[state.schedule.filters.length - 1].tid);
+      } else if (e.key === "Enter") {
+        const first = document.querySelector("#pfMenu .pf-item");
+        if (first) { e.preventDefault(); addFilter(+first.dataset.tid); }
+      } else if (e.key === "Escape") { renderSchMenu(false); inp.blur(); }
+    };
+  }
+  if (boxEl) boxEl.onclick = (e) => { if (!e.target.closest(".pf-chip")) { const i = $("#schSearch"); if (i) i.focus(); } };
+  renderSchChips();
   renderScheduleBody();
 }
 
 function renderScheduleBody() {
   const body = $("#schBody");
-  const league = state.league;
-  const all = scheduleFor(league, state.bracket);
+  const all = scheduleFor(state.league, state.bracket);
   if (!all.length) {
     body.innerHTML = `<div class="panel"><p class="caption">No schedule has been posted for this division yet.</p></div>`;
     return;
   }
 
-  const terms = (state.schedule.q || "").trim().toLowerCase().split(/\s+/).filter(Boolean);
-  const searching = terms.length > 0;
+  const weeks = scheduleWeeks(all);                 // weeks from ALL matches, so nav is stable under any filter
+  let wk = state.schedule.weekStart;
+  if (wk == null || !weeks.includes(wk)) wk = defaultWeek(all, weeks);
+  state.schedule.weekStart = wk;
+  const idx = weeks.indexOf(wk);
+  const start = new Date(wk), end = new Date(wk + 6 * DAY_MS);
+  const fmtD = (d) => d.toLocaleDateString([], { month: "short", day: "numeric" });
+  const nav = `<div class="sch-nav">` +
+      `<button class="btn btn-secondary btn-sm sch-arrow" id="schPrev"${idx <= 0 ? " disabled" : ""} aria-label="Previous week">‹</button>` +
+      `<div class="sch-week"><span class="sch-week-label">${fmtD(start)} – ${fmtD(end)}</span>` +
+        `<span class="sch-week-sub">Week ${idx + 1} of ${weeks.length}</span></div>` +
+      `<button class="btn btn-secondary btn-sm sch-arrow" id="schNext"${idx >= weeks.length - 1 ? " disabled" : ""} aria-label="Next week">›</button>` +
+      `<button class="btn btn-ghost btn-sm" id="schLive" title="Jump to the latest week">Now</button>` +
+    `</div>`;
 
-  let shown, nav = "", weeks = [], idx = -1;
-  if (searching) {
-    shown = all.filter((m) => schMatchesQuery(m, terms));   // across all weeks
-  } else {
-    weeks = scheduleWeeks(all);
-    let wk = state.schedule.weekStart;
-    if (wk == null || !weeks.includes(wk)) wk = defaultWeek(all, weeks);
-    state.schedule.weekStart = wk;
-    idx = weeks.indexOf(wk);
-    const start = new Date(wk), end = new Date(wk + 6 * DAY_MS);
-    const fmtD = (d) => d.toLocaleDateString([], { month: "short", day: "numeric" });
-    nav = `<div class="sch-nav">` +
-        `<button class="btn btn-secondary btn-sm sch-arrow" id="schPrev"${idx <= 0 ? " disabled" : ""} aria-label="Previous week">‹</button>` +
-        `<div class="sch-week"><span class="sch-week-label">${fmtD(start)} – ${fmtD(end)}</span>` +
-          `<span class="sch-week-sub">Week ${idx + 1} of ${weeks.length}</span></div>` +
-        `<button class="btn btn-secondary btn-sm sch-arrow" id="schNext"${idx >= weeks.length - 1 ? " disabled" : ""} aria-label="Next week">›</button>` +
-        `<button class="btn btn-ghost btn-sm" id="schLive" title="Jump to the latest week">Now</button>` +
-      `</div>`;
-    shown = all.filter((m) => weekStartOf(m.ts) === wk);
-  }
-
+  const wkMatches = all.filter((m) => weekStartOf(m.ts) === wk && schPassesFilter(m));
   const byDay = new Map();
-  shown.forEach((m) => {
+  wkMatches.forEach((m) => {
     const d = new Date(m.ts); d.setHours(0, 0, 0, 0);
     const k = d.getTime();
     (byDay.get(k) || byDay.set(k, []).get(k)).push(m);
@@ -1163,18 +1257,16 @@ function renderScheduleBody() {
     return `<div class="sch-day"><div class="sch-day-h">${dh}</div>${byDay.get(k).map(schMatchHTML).join("")}</div>`;
   }).join("");
 
-  const empty = searching
-    ? `<div class="panel"><p class="caption">No matches for “${escapeHtml((state.schedule.q || "").trim())}”.</p></div>`
+  const empty = state.schedule.filters.length
+    ? `<div class="panel"><p class="caption">None of the selected player${state.schedule.filters.length > 1 ? "s" : ""} play this week — try another week.</p></div>`
     : `<div class="panel"><p class="caption">No matches this week.</p></div>`;
   body.innerHTML = nav + `<div class="sch-list">${days || empty}</div>`;
 
-  if (!searching) {
-    if ($("#schPrev")) $("#schPrev").onclick = () => { if (idx > 0) { state.schedule.weekStart = weeks[idx - 1]; renderScheduleBody(); } };
-    if ($("#schNext")) $("#schNext").onclick = () => { if (idx < weeks.length - 1) { state.schedule.weekStart = weeks[idx + 1]; renderScheduleBody(); } };
-    if ($("#schLive")) $("#schLive").onclick = () => { state.schedule.weekStart = null; renderScheduleBody(); };
-  }
+  if ($("#schPrev")) $("#schPrev").onclick = () => { if (idx > 0) { state.schedule.weekStart = weeks[idx - 1]; renderScheduleBody(); } };
+  if ($("#schNext")) $("#schNext").onclick = () => { if (idx < weeks.length - 1) { state.schedule.weekStart = weeks[idx + 1]; renderScheduleBody(); } };
+  if ($("#schLive")) $("#schLive").onclick = () => { state.schedule.weekStart = null; renderScheduleBody(); };
   body.querySelectorAll(".sch-card.clickable").forEach((c) => {
-    const fire = () => openH2H(+c.dataset.a, +c.dataset.b, league);
+    const fire = () => openH2H(+c.dataset.a, +c.dataset.b, state.league);
     c.onclick = fire;
     c.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fire(); } };
   });
