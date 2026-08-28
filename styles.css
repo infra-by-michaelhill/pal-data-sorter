@@ -582,6 +582,11 @@ tbody tr.row-click:hover td.name .disclosure { opacity: 1; }
   .controls .spacer { display: none; }               /* let Export CSV wrap, not shove off-screen */
   #colMenuWrap, .controls .control-group:has(#colMenuWrap) { display: none; }
 
+  /* Give the table its own scroll viewport (top bar 109 + tab bar 60 + gap) so the
+     sticky header pins on vertical scroll — the horizontal-scroll container was
+     otherwise trapping top:0 against the full-height table instead of the screen. */
+  .table-scroll { max-height: calc(100dvh - 177px); overflow: auto; overscroll-behavior: contain; }
+
   /* Freeze # + Player as a left anchor so the name stays put while stats scroll */
   td.col-rank, th.col-rank, td.col-name, th.col-name { position: sticky; }
   td.col-rank, th.col-rank { left: 0; box-sizing: border-box; width: 40px; min-width: 40px; }
@@ -593,11 +598,13 @@ tbody tr.row-click:hover td.name .disclosure { opacity: 1; }
   tbody tr:nth-child(odd) td.col-rank, tbody tr:nth-child(odd) td.col-name { background: hsl(var(--surface)); }
   tbody tr:nth-child(even) td.col-rank, tbody tr:nth-child(even) td.col-name { background: hsl(var(--surface-2)); }
   thead th.col-rank, thead th.col-name { background: hsl(var(--surface-2)); }
-  /* freeze line: hairline + soft shadow on the right edge of Player */
-  td.col-name, th.col-name { box-shadow: inset -1px 0 0 hsl(var(--border)), 7px 0 8px -7px hsl(var(--fg) / 0.22); }
-  /* fixed Player width so scrolling stats keep room; long doubles names wrap at spaces */
-  td.col-name, th.col-name { width: 150px; min-width: 130px; }
-  td.col-name { white-space: normal; overflow-wrap: break-word; line-height: 1.22; }
+  /* freeze line: a quiet hairline on the right edge of Player */
+  td.col-name, th.col-name { box-shadow: inset -1px 0 0 hsl(var(--border)); }
+  /* Player hugs its longest name so the freeze line sits close to the text.
+     The cap lives on the inner span (table cells ignore max-width), so short
+     brackets get a narrow column and long doubles names wrap at spaces. */
+  td.col-name .nm { display: inline-block; max-width: 42vw; white-space: normal;
+                    overflow-wrap: break-word; line-height: 1.22; vertical-align: middle; }
 
   /* head-to-head: stack the pickers with "vs" centered between them */
   .h2h-pickers { flex-direction: column; align-items: stretch; }

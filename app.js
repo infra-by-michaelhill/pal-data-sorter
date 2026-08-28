@@ -365,7 +365,7 @@ function standingsCell(r, c, i) {
   if (c.key === "rank") return `<td class="rank">${i + 1}</td>`;
   if (c.key === "name") {
     const disc = state.granular.loaded ? '<span class="disclosure">›</span>' : "";
-    return `<td class="text name">${escapeHtml(r.name)}${disc}</td>`;
+    return `<td class="text name"><span class="nm">${escapeHtml(r.name)}</span>${disc}</td>`;
   }
   if (c.key === "bracket") return `<td class="text"><span class="badge">${escapeHtml(r.bracket)}</span></td>`;
   return `<td>${fmtNum(r[c.key], c.key)}</td>`;
