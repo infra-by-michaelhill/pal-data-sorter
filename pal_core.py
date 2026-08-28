@@ -12,8 +12,12 @@ session state, so it works identically on a single local process and on
 ephemeral serverless instances.
 """
 
+import base64
 import datetime
+import gzip
 import http.cookiejar
+import json
+import os
 import re
 import urllib.parse
 import urllib.request
@@ -276,3 +280,79 @@ def fetch_player(cookie, team_id, name):
     result = parse_matches(html, name or "")
     result["team_id"] = tid
     return result
+
+
+def verify_cookie(cookie):
+    """Confirm a cookie is a real logged-in PAL session (gate for cache writes)."""
+    if not cookie or "sessionid=" not in cookie:
+        return False
+    try:
+        return "Logout" in get_with_cookie(f"{BASE}/league/", cookie)
+    except Exception:
+        return False
+
+
+# ---------------------------------------------------------------------------
+# Shared cache for granular data (rarely changes; expensive to compute).
+#   Backend ladder:
+#     1. Vercel KV / Upstash Redis over its REST API  -> shared + persistent
+#        (set KV_REST_API_URL + KV_REST_API_TOKEN; stdlib HTTP, no SDK)
+#     2. a local file next to this module               -> local-dev persistence
+#     3. nothing (read-only serverless FS, no KV)        -> graceful no-op
+# ---------------------------------------------------------------------------
+_KV_URL = (os.environ.get("KV_REST_API_URL") or "").rstrip("/")
+_KV_TOKEN = os.environ.get("KV_REST_API_TOKEN") or ""
+_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".pal_cache")
+
+
+def _kv_get(key):
+    req = urllib.request.Request(f"{_KV_URL}/get/{key}",
+                                 headers={"Authorization": f"Bearer {_KV_TOKEN}"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read().decode()).get("result")
+
+
+def _kv_set(key, value):
+    req = urllib.request.Request(
+        f"{_KV_URL}/set/{key}", data=value.encode(),
+        headers={"Authorization": f"Bearer {_KV_TOKEN}", "Content-Type": "text/plain"})
+    with urllib.request.urlopen(req, timeout=15) as r:
+        return json.loads(r.read().decode()).get("result") == "OK"
+
+
+def cache_get_granular(key):
+    full = "pal-granular-" + re.sub(r"[^a-zA-Z0-9_-]", "", key or "default")
+    if _KV_URL and _KV_TOKEN:
+        try:
+            res = _kv_get(full)
+            if res:
+                return json.loads(gzip.decompress(base64.b64decode(res)).decode())
+        except Exception:
+            pass
+        return None
+    try:
+        with open(os.path.join(_CACHE_DIR, full + ".json"), encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def cache_put_granular(key, by_id):
+    full = "pal-granular-" + re.sub(r"[^a-zA-Z0-9_-]", "", key or "default")
+    fetched_at = datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds")
+    payload = {"byId": by_id, "fetchedAt": fetched_at}
+    if _KV_URL and _KV_TOKEN:
+        try:
+            blob = base64.b64encode(gzip.compress(json.dumps(payload).encode())).decode()
+            if _kv_set(full, blob):
+                return True, fetched_at
+        except Exception:
+            pass
+        return False, fetched_at
+    try:
+        os.makedirs(_CACHE_DIR, exist_ok=True)
+        with open(os.path.join(_CACHE_DIR, full + ".json"), "w", encoding="utf-8") as f:
+            json.dump(payload, f)
+        return True, fetched_at
+    except Exception:
+        return False, fetched_at

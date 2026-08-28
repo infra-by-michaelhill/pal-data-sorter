@@ -15,9 +15,12 @@ and re-sorting is instant and offline, with one-click **CSV export**.
   **Match Wins**, **Losses**, **Matches**, **Win %**, or player name.
 - A league with two brackets lets you view **A**, **B**, or **Both** (with a
   bracket badge); a single-bracket league just shows its table.
-- **Load granular data** (optional) pulls every player's match history behind a
-  progress bar, adds sortable **Fargo** and **Avg Opp Fargo** columns, and makes
-  each row clickable → a **player page** with two tabs:
+- **Granular data is shared-cached.** The first person to load it scrapes every
+  player's match history (behind a progress bar); after that it's stored and
+  everyone else loads it instantly, with an **"Updated 3h ago"** age shown up
+  top. A **Refresh** button re-scrapes and re-publishes it for everyone. It adds
+  sortable **Fargo** and **Avg Opp Fargo** columns, and makes each row clickable
+  → a **player page** with two tabs:
   - **Matches** — every match with the official score, the **spot** (bonus
     points), the rating you **played as** that match, and W/L; all sortable and
     CSV-exportable.
@@ -81,6 +84,23 @@ Or from the CLI: `npm i -g vercel && vercel` in this folder.
 `vercel.json` builds `index.py` with the Python runtime and routes every request
 to it; the handler serves the bundled static files and the `/api/*` endpoints.
 Each new push to `main` redeploys.
+
+### Shared granular cache (optional but recommended)
+
+So users don't each re-scrape all the match pages, the granular data is cached
+and shared. Backend, in order of preference:
+
+1. **Vercel KV** (Upstash Redis) — shared across everyone and persistent. In the
+   Vercel dashboard → **Storage → Create → KV**, attach it to the project. Vercel
+   injects `KV_REST_API_URL` and `KV_REST_API_TOKEN`; the app uses them over plain
+   HTTPS (no SDK). Free tier is far more than enough.
+2. **Local file** (`.pal_cache/`) — used automatically when there's no KV, so the
+   cache persists across sessions when you run it locally.
+3. **Nothing** — with no KV on Vercel, each browser just caches its own copy
+   (shown as "this device only"); everything still works.
+
+Writing to the shared cache requires a valid PAL login (the cookie is verified
+against the site), so a stray visitor can't poison it.
 
 > **Heads-up on hosting:** once it's on a public URL, anyone with the link who
 > has a valid PAL account can use it, and their credentials transit Vercel's

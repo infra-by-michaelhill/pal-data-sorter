@@ -39,7 +39,13 @@ class handler(BaseHTTPRequestHandler):
 
     # ---- static frontend ------------------------------------------------
     def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path
+        parsed = urllib.parse.urlparse(self.path)
+        path = parsed.path
+        if path == "/api/granular":   # read the shared granular cache + its age
+            key = urllib.parse.parse_qs(parsed.query).get("key", ["default"])[0]
+            data = pal_core.cache_get_granular(key)
+            self._send(200, json.dumps(data or {"byId": None, "fetchedAt": None}))
+            return
         rel = "index.html" if path in ("/", "") else path.lstrip("/")
         ext = os.path.splitext(rel)[1].lower()
         target = os.path.normpath(os.path.join(BASE_DIR, rel))
@@ -67,6 +73,12 @@ class handler(BaseHTTPRequestHandler):
             elif path == "/api/player":
                 self._send(200, json.dumps(pal_core.fetch_player(
                     req.get("cookie"), req.get("team_id"), req.get("name"))))
+            elif path == "/api/granular":   # store the shared granular cache
+                if not pal_core.verify_cookie(req.get("cookie")):
+                    self._send(403, json.dumps({"error": "Sign in again to refresh shared data."}))
+                    return
+                ok, fetched_at = pal_core.cache_put_granular(req.get("key"), req.get("byId") or {})
+                self._send(200, json.dumps({"stored": ok, "fetchedAt": fetched_at}))
             else:
                 self._send(404, json.dumps({"error": "not found"}))
         except (TypeError, ValueError) as e:

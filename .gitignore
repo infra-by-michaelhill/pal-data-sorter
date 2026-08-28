@@ -12,3 +12,6 @@ Thumbs.db
 # Editors
 .vscode/
 .idea/
+
+# Local granular cache (file fallback when no KV)
+.pal_cache/

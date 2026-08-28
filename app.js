@@ -41,7 +41,7 @@ const state = {
   view: "standings",                    // "standings" | "player"
   detail: null, detailTab: "insights",  // "insights" | "matches"
   detailSort: { key: "dateISO", dir: "asc" },
-  granular: { loaded: false, loading: false, byId: {}, done: 0, total: 0, errors: 0 },
+  granular: { loaded: false, loading: false, byId: {}, done: 0, total: 0, errors: 0, fetchedAt: null, shared: true },
 };
 
 // ---- storage helpers -----------------------------------------------------
@@ -191,7 +191,7 @@ $("#loginForm").addEventListener("submit", async (e) => {
 $("#signoutBtn").addEventListener("click", () => {
   store.clearAll();
   state.data = null; state.cookie = null;
-  state.granular = { loaded: false, loading: false, byId: {}, done: 0, total: 0, errors: 0 };
+  state.granular = { loaded: false, loading: false, byId: {}, done: 0, total: 0, errors: 0, fetchedAt: null, shared: true };
   state.view = "standings";
   $("#app").classList.add("hidden"); $("#login").classList.remove("hidden");
   $("#password").value = "";
@@ -209,9 +209,8 @@ $("#refreshBtn").addEventListener("click", async () => {
       if (!user || !password) throw new Error("cancelled");
     }
     const data = await fetchData(user, password);
-    // a refresh invalidates granular (new cookie); drop it
-    state.granular = { loaded: false, loading: false, byId: {}, done: 0, total: 0, errors: 0 };
-    store.cacheGranular(null);
+    // standings refresh only re-pulls standings; the shared granular cache is
+    // independent (refresh it with its own button), so leave it in place.
     onData(data);
   } catch (ex) {
     if (ex.message !== "cancelled") alert("Refresh failed: " + ex.message);
@@ -229,6 +228,7 @@ function onData(data) {
   $("#fetchedMeta").textContent = data.fetchedAt ? "Updated " + new Date(data.fetchedAt).toLocaleString() : "";
   $("#login").classList.add("hidden"); $("#app").classList.remove("hidden");
   renderAll();
+  if (!state.granular.loaded && !state.granular.loading) initGranular();
 }
 
 function bracketsFor(league) { return Object.keys(state.data.leagues[league].brackets).sort(); }
@@ -254,7 +254,7 @@ function avgOpp(matches) {
   return Math.round((vals.reduce((s, v) => s + v, 0) / vals.length) * 10) / 10;
 }
 
-// ---- granular loading ----------------------------------------------------
+// ---- granular loading (shared cache) -------------------------------------
 async function pool(items, size, worker) {
   let i = 0;
   const runners = Array.from({ length: Math.min(size, items.length) }, async () => {
@@ -263,8 +263,44 @@ async function pool(items, size, worker) {
   await Promise.all(runners);
 }
 
+function seasonKey() { return (state.data && state.data.order || []).join("-") || "default"; }
+
+function relAge(iso) {
+  if (!iso) return "";
+  const s = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (s < 90) return "just now";
+  const m = s / 60; if (m < 60) return `${Math.round(m)}m ago`;
+  const h = m / 60; if (h < 24) return `${Math.round(h)}h ago`;
+  return `${Math.round(h / 24)}d ago`;
+}
+
+function adoptGranular(byId, fetchedAt) {
+  const g = state.granular;
+  g.byId = byId; g.fetchedAt = fetchedAt || null; g.loaded = true; g.errors = 0;
+  store.cacheGranular({ byId, fetchedAt: g.fetchedAt });
+}
+
+// On load, get the shared cache once (no 80-page scrape) — session mirror first.
+async function initGranular() {
+  const cg = store.cachedGranular();
+  if (cg && cg.byId && Object.keys(cg.byId).length) {
+    adoptGranular(cg.byId, cg.fetchedAt);
+    renderGranularControl(); renderStandingsTable();
+    return;
+  }
+  try {
+    const res = await fetch(`/api/granular?key=${encodeURIComponent(seasonKey())}`);
+    const j = await res.json();
+    if (j && j.byId && Object.keys(j.byId).length) {
+      adoptGranular(j.byId, j.fetchedAt);
+      renderGranularControl(); renderStandingsTable();
+    }
+  } catch (_) { /* no shared cache reachable — the Load button stays */ }
+}
+
+// Manual refresh: re-scrape everyone, then store for everyone else.
 async function loadGranular() {
-  if (!state.cookie) { renderGranularControl("Session expired — sign in again to load detail data."); return; }
+  if (!state.cookie) { renderGranularControl("Session expired — sign in again to refresh detail data."); return; }
   const players = allPlayers();
   const g = state.granular;
   g.loading = true; g.errors = 0; g.done = 0; g.total = players.length; g.byId = {};
@@ -282,7 +318,17 @@ async function loadGranular() {
     return;
   }
   g.loaded = true;
-  store.cacheGranular(g.byId);
+  // publish to the shared cache for everyone else
+  try {
+    const res = await fetch("/api/granular", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ cookie: state.cookie, key: seasonKey(), byId: g.byId }),
+    });
+    const j = await res.json();
+    g.fetchedAt = j.fetchedAt || new Date().toISOString();
+    g.shared = res.ok && j.stored === true;
+  } catch (_) { g.fetchedAt = new Date().toISOString(); g.shared = false; }
+  store.cacheGranular({ byId: g.byId, fetchedAt: g.fetchedAt });
   renderGranularControl();
   renderAll();
 }
@@ -305,9 +351,11 @@ function renderGranularControl(errorMsg) {
     return;
   }
   if (g.loaded) {
-    const note = g.errors ? ` <span class="notice">(${g.errors} missing)</span>` : "";
-    wrap.innerHTML = `<span class="loaded-tag">✓ Loaded</span>` + note +
-      ` <button class="btn btn-ghost btn-sm" id="granularReload">Reload</button>`;
+    const age = g.fetchedAt ? `Updated ${relAge(g.fetchedAt)}` : "Loaded";
+    const local = g.shared === false ? ` <span class="notice">(this device only)</span>` : "";
+    const miss = g.errors ? ` <span class="notice">(${g.errors} missing)</span>` : "";
+    wrap.innerHTML = `<span class="loaded-tag">✓ ${age}</span>` + local + miss +
+      ` <button class="btn btn-ghost btn-sm" id="granularReload">Refresh</button>`;
     $("#granularReload").onclick = loadGranular;
     return;
   }
@@ -791,7 +839,7 @@ function exportDetailCsv() {
   const cached = store.cachedData();
   if (cached && cached.leagues) {
     const cg = store.cachedGranular();
-    if (cg && Object.keys(cg).length) { state.granular.byId = cg; state.granular.loaded = true; }
+    if (cg && cg.byId && Object.keys(cg.byId).length) adoptGranular(cg.byId, cg.fetchedAt);
     onData(cached);
     return;
   }
