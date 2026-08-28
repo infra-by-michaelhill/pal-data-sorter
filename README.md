@@ -19,6 +19,12 @@ snapshot that a scheduled job (and an hourly-capped manual refresh) keeps fresh.
   a per-match "played as" rating) and **Insights** (a session played-as rating,
   games-won-vs-expected, a played-as line chart, best/off-night). Every derived
   number has an **ⓘ** explaining it, from the FargoRate model.
+- **Head-to-Head** (top-level mode, or "Compare" from a player page): pick any two
+  players in a league and see win probability, the PAL race (all races to 7 with
+  the correct bonus-point spot from the Fargo gap), a full **scoreline
+  probability chart** for every possible result, and their actual match if they're
+  in the same bracket. Toggle between rating by **official Fargo** and **this
+  season's form** (played-as).
 - Light/dark theme, Crucible-styled. No frameworks, **Python standard library
   only** — nothing to `pip install`.
 

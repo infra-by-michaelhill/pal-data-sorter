@@ -43,6 +43,8 @@ const state = {
   granular: { loaded: false, byId: {}, fetchedAt: null },
   refreshing: false,
   hiddenCols: new Set(),   // column keys the user chose to hide
+  mode: "standings",       // "standings" | "h2h"
+  h2h: { league: null, a: null, b: null, basis: "fargo" },  // basis: "fargo" | "form"
 };
 
 // ---- storage helpers -----------------------------------------------------
@@ -416,11 +418,62 @@ const FARGO = {
     }
     return Math.round((lo + hi) / 2);
   },
+  // PAL handicap: bonus games spotted to the lower-rated player, by Fargo gap.
+  spot(delta) {
+    const d = Math.abs(delta);
+    if (d <= 50) return 0;
+    if (d <= 100) return 1;
+    if (d <= 150) return 2;
+    if (d <= 225) return 3;
+    return 4;
+  },
 };
+
+function _comb(n, k) {
+  if (k < 0 || k > n) return 0;
+  k = Math.min(k, n - k);
+  let r = 1;
+  for (let i = 0; i < k; i++) r = (r * (n - i)) / (i + 1);
+  return r;
+}
+
+// Full result distribution for a race to 7 with a spot, given two ratings.
+// Returns { higher:'A'|'B', delta, spot, pGame, aWin, bWin, results:[{a,b,winner,prob}], modal }
+function matchup(rA, rB) {
+  const delta = Math.abs(rA - rB);
+  const spot = FARGO.spot(delta);
+  const higher = rA >= rB ? "A" : "B";
+  const hr = Math.max(rA, rB), lr = Math.min(rA, rB);
+  const p = FARGO.pGame(hr, lr);           // per-game win prob for the favorite
+  const need = 7 - spot;                    // on-table wins the underdog needs
+  const rows = [];
+  // favorite wins: underdog gets j on-table games (j = 0 .. need-1)
+  for (let j = 0; j <= need - 1; j++) {
+    rows.push({ favG: 7, dogG: spot + j, favWin: true,
+                prob: _comb(6 + j, 6) * Math.pow(p, 7) * Math.pow(1 - p, j) });
+  }
+  // underdog wins: favorite gets i on-table games (i = 6 .. 0), closest first
+  for (let i = 6; i >= 0; i--) {
+    rows.push({ favG: i, dogG: 7, favWin: false,
+                prob: _comb(need - 1 + i, i) * Math.pow(1 - p, need) * Math.pow(p, i) });
+  }
+  // map favorite/underdog back to A/B for display
+  const results = rows.map((r) => {
+    const aIsFav = higher === "A";
+    const a = aIsFav ? r.favG : r.dogG;
+    const b = aIsFav ? r.dogG : r.favG;
+    const winner = r.favWin === aIsFav ? "A" : "B";
+    return { a, b, winner, prob: r.prob };
+  });
+  const aWin = results.filter((r) => r.winner === "A").reduce((s, r) => s + r.prob, 0);
+  let modal = 0;
+  results.forEach((r, i) => { if (r.prob > results[modal].prob) modal = i; });
+  return { higher, delta, spot, pGame: p, aWin, bWin: 1 - aWin, results, modal };
+}
 
 // ---- detail (per-player) view --------------------------------------------
 function openDetail(row) {
-  state.detail = { teamId: row.team_id, name: row.name };
+  state.detail = { teamId: row.team_id, name: row.name, league: state.league };
   state.detailTab = "insights";
   state.detailSort = { key: "dateISO", dir: "asc" };
   state.view = "player";
@@ -484,9 +537,16 @@ function renderDetailBar() {
       `<button role="tab" aria-selected="${state.detailTab === "insights"}" data-tab="insights">Insights</button>` +
       `<button role="tab" aria-selected="${state.detailTab === "matches"}" data-tab="matches">Matches</button>` +
     `</div>` +
+    `<button class="btn btn-secondary btn-sm" id="compareBtn">Compare ⚔</button>` +
     `<button class="btn btn-primary btn-sm" id="detailCsvBtn">Export CSV</button>`;
   $("#backBtn").onclick = backToStandings;
   $("#detailCsvBtn").onclick = exportDetailCsv;
+  $("#compareBtn").onclick = () => {
+    state.mode = "h2h";
+    state.h2h.league = state.detail.league || state.league;
+    state.h2h.a = state.detail.teamId; state.h2h.b = null;
+    renderAll();
+  };
   bar.querySelectorAll(".tabs button").forEach((b) => {
     b.onclick = () => { state.detailTab = b.dataset.tab; renderAll(); };
   });
@@ -685,15 +745,201 @@ document.addEventListener("click", (e) => {
   if (!e.target.closest(".info")) document.querySelectorAll(".info-pop").forEach((p) => p.classList.add("hidden"));
 });
 
+// ---- Head-to-Head --------------------------------------------------------
+function fargoFor(id) { const g = state.granular.byId[id]; return g ? g.fargo : null; }
+function playedAsFor(id) {
+  const g = state.granular.byId[id];
+  if (!g || !g.matches) return null;
+  const per = g.matches.filter((m) => m.oppFargo != null)
+    .map((m) => ({ wg: m.my - (m.myBp || 0), lg: m.opp - (m.oppBp || 0), ropp: m.oppFargo }));
+  return FARGO.playedAsSession(per);
+}
+function leaguePlayers(league) {
+  const bks = state.data.leagues[league].brackets;
+  const out = [];
+  Object.keys(bks).sort().forEach((label) => bks[label].forEach((r) => out.push({ ...r, bracket: label })));
+  return out;
+}
+function findPlayer(league, id) { return leaguePlayers(league).find((p) => p.team_id === id) || null; }
+function rankOf(league, bracket, id) {
+  const rows = state.data.leagues[league].brackets[bracket].slice().sort((a, b) => b.GP - a.GP);
+  const i = rows.findIndex((r) => r.team_id === id);
+  return i >= 0 ? i + 1 : null;
+}
+function actualMatch(aId, bName) {
+  const g = state.granular.byId[aId];
+  if (!g || !g.matches) return null;
+  const bn = String(bName).trim().toUpperCase();
+  return g.matches.find((m) => String(m.opponent).trim().toUpperCase() === bn) || null;
+}
+
+function playerOptions(players, selectedId) {
+  const byBracket = {};
+  players.forEach((p) => { (byBracket[p.bracket] = byBracket[p.bracket] || []).push(p); });
+  return Object.keys(byBracket).sort().map((br) => {
+    const label = br.length === 1 ? "Bracket " + br : br;
+    const opts = byBracket[br].slice().sort((a, b) => a.name.localeCompare(b.name)).map((p) =>
+      `<option value="${p.team_id}"${p.team_id === selectedId ? " selected" : ""}>` +
+      `${escapeHtml(p.name)} · ${fargoFor(p.team_id) ?? "—"}</option>`).join("");
+    return `<optgroup label="${escapeHtml(label)}">${opts}</optgroup>`;
+  }).join("");
+}
+
+function renderH2H() {
+  const box = $("#h2h");
+  const order = state.data.order;
+  if (!state.h2h.league || !state.data.leagues[state.h2h.league]) state.h2h.league = state.league || order[0];
+  const league = state.h2h.league;
+  const players = leaguePlayers(league);
+  const leagueSeg = order.map((k) =>
+    `<button role="tab" aria-selected="${k === league}" data-league="${k}">${escapeHtml(state.data.leagues[k].name)}</button>`).join("");
+  box.innerHTML =
+    `<div class="controls">` +
+      `<div class="control-group"><span>League</span><div class="segmented" id="h2hLeagueSeg">${leagueSeg}</div></div>` +
+      `<div class="spacer"></div>` +
+      `<div class="control-group"><span>Rate by</span><div class="segmented" id="h2hBasis">` +
+        `<button data-basis="fargo" aria-selected="${state.h2h.basis === "fargo"}">Fargo</button>` +
+        `<button data-basis="form" aria-selected="${state.h2h.basis === "form"}">Season form</button>` +
+      `</div></div>` +
+    `</div>` +
+    `<div class="h2h-pickers">` +
+      `<select class="h2h-select" id="h2hA"><option value="">Select player…</option>${playerOptions(players, state.h2h.a)}</select>` +
+      `<span class="h2h-vs">vs</span>` +
+      `<select class="h2h-select" id="h2hB"><option value="">Select player…</option>${playerOptions(players, state.h2h.b)}</select>` +
+    `</div>` +
+    `<div id="h2hResult"></div>`;
+  $("#h2hLeagueSeg").querySelectorAll("button").forEach((b) => b.onclick = () => {
+    state.h2h.league = b.dataset.league; state.h2h.a = null; state.h2h.b = null; renderH2H();
+  });
+  $("#h2hBasis").querySelectorAll("button").forEach((b) => b.onclick = () => {
+    state.h2h.basis = b.dataset.basis; renderH2H();
+  });
+  $("#h2hA").onchange = (e) => { state.h2h.a = e.target.value ? +e.target.value : null; renderH2HResult(); };
+  $("#h2hB").onchange = (e) => { state.h2h.b = e.target.value ? +e.target.value : null; renderH2HResult(); };
+  renderH2HResult();
+}
+
+function h2hCardHTML(p, colorClass) {
+  const f = fargoFor(p.team_id), pa = playedAsFor(p.team_id);
+  const arrow = pa == null || f == null ? "" :
+    pa > f ? '<span class="pa-cell up">▲</span>' : pa < f ? '<span class="pa-cell down">▼</span>' : "";
+  const brLabel = p.bracket.length === 1 ? "Bracket " + p.bracket : p.bracket;
+  const rank = rankOf(state.h2h.league, p.bracket, p.team_id);
+  return `<div class="h2h-card">` +
+    `<div class="h2h-name"><span class="dot ${colorClass}"></span>${escapeHtml(p.name)}</div>` +
+    `<div class="h2h-sub">${escapeHtml(brLabel)}${rank ? ` · Rank ${rank}` : ""}</div>` +
+    `<div class="h2h-stats">` +
+      `<div><span>Fargo</span><b>${f ?? "—"}</b></div>` +
+      `<div><span>Played as</span><b>${pa ?? "—"} ${arrow}</b></div>` +
+      `<div><span>Record</span><b>${p.MW}–${p.ML}</b></div>` +
+    `</div></div>`;
+}
+
+function renderH2HResult() {
+  const el = $("#h2hResult"); if (!el) return;
+  const { a, b, league, basis } = state.h2h;
+  if (!a || !b) { el.innerHTML = `<div class="panel"><p class="caption">Pick two players to see the matchup.</p></div>`; return; }
+  if (a === b) { el.innerHTML = `<div class="panel"><p class="caption">Pick two different players.</p></div>`; return; }
+  const pa = findPlayer(league, a), pb = findPlayer(league, b);
+  if (!pa || !pb) { el.innerHTML = ""; return; }
+
+  const fa = fargoFor(a), fb = fargoFor(b);
+  const formA = playedAsFor(a), formB = playedAsFor(b);
+  const formAvail = formA != null && formB != null;
+  const useForm = basis === "form" && formAvail;
+  const rA = useForm ? formA : fa, rB = useForm ? formB : fb;
+  if (rA == null || rB == null) {
+    el.innerHTML = `<div class="panel"><p class="caption">Not enough rating data to compare these two yet.</p></div>`;
+    return;
+  }
+
+  const m = matchup(rA, rB);
+  const aPct = Math.round(m.aWin * 100), bPct = 100 - aPct;
+  const favPct = Math.max(aPct, bPct);
+  const favName = m.aWin >= 0.5 ? pa.name : pb.name;
+  const verdict = favPct >= 80 ? "a heavy favorite" : favPct >= 65 ? "a clear favorite"
+    : favPct >= 55 ? "a slight edge" : "a toss-up";
+  const higherName = m.higher === "A" ? pa.name : pb.name;
+  const lowerName = m.higher === "A" ? pb.name : pa.name;
+
+  // scoreline chart
+  const maxProb = Math.max(...m.results.map((r) => r.prob), 0.0001);
+  const bars = m.results.filter((r) => r.prob >= 0.005).map((r) => {
+    const pct = r.prob * 100;
+    const w = (r.prob / maxProb * 100).toFixed(1);
+    const cls = r.winner === "A" ? "favA" : "favB";
+    const modal = r === m.results[m.modal] ? " modal" : "";
+    return `<div class="sl-row${modal}">` +
+      `<span class="sl-score">${r.a}–${r.b}</span>` +
+      `<span class="sl-track"><span class="sl-bar ${cls}" style="width:${w}%"></span></span>` +
+      `<span class="sl-pct">${pct < 1 ? "<1" : Math.round(pct)}%</span></div>`;
+  }).join("");
+
+  // actual match (same bracket only)
+  let actual = "";
+  if (pa.bracket === pb.bracket) {
+    const am = actualMatch(a, pb.name);
+    if (am) {
+      const spotTxt = am.myBp ? ` (${pa.name.split(" ")[0]} +${am.myBp})` : am.oppBp ? ` (${pb.name.split(" ")[0]} +${am.oppBp})` : "";
+      const winner = am.my > am.opp ? pa.name : pb.name;
+      actual = `<div class="panel"><p class="panel-title">Their actual match</p>` +
+        `<p class="hero-sub">${fmtDate(am.dateISO, am.date)} — <b>${escapeHtml(pa.name)} ${am.my}–${am.opp} ${escapeHtml(pb.name)}</b>${spotTxt}. ${escapeHtml(winner)} won.</p></div>`;
+    } else {
+      actual = `<div class="panel"><p class="hero-sub">Same bracket — they play once this season, but haven't yet. This is the forecast.</p></div>`;
+    }
+  }
+
+  const basisNote = basis === "form" && !formAvail
+    ? ` <span class="notice">(season form unavailable — using Fargo)</span>` : "";
+
+  el.innerHTML =
+    `<div class="h2h-compare">${h2hCardHTML(pa, "cA")}<div class="h2h-mid">VS</div>${h2hCardHTML(pb, "cB")}</div>` +
+    `<div class="panel">` +
+      `<p class="panel-title">Win probability ${info("h2hp",
+        `Each game is won by the higher-rated player with chance <b>2^(Δ/100)/(1+2^(Δ/100))</b> from the Fargo gap. The match is a race to 7 with the lower player spotted per PAL's table (Δ 1–50→0, 51–100→1, 101–150→2, 151–225→3, 226+→4). Probabilities come from that race. ${SRC}`)}${basisNote}</p>` +
+      `<div class="meter-track"><span class="meter-a" style="width:${aPct}%"></span><span class="meter-b" style="width:${bPct}%"></span></div>` +
+      `<div class="meter-labels"><span><span class="dot cA"></span>${escapeHtml(pa.name)} ${aPct}%</span>` +
+        `<span>${bPct}% ${escapeHtml(pb.name)}<span class="dot cB"></span></span></div>` +
+      `<p class="verdict-line">${escapeHtml(favName)} is ${verdict}${useForm ? ", by this season's form" : ""}.</p>` +
+      `<p class="caption">Race to 7 · Fargo gap ${m.delta} → ${escapeHtml(lowerName)} spotted <b>${m.spot}</b> on the wire (${escapeHtml(higherName)} needs 7, ${escapeHtml(lowerName)} needs ${7 - m.spot}).</p>` +
+    `</div>` +
+    `<div class="panel"><p class="panel-title">Possible results ${info("h2hs",
+      `Every final score that can happen in this race, with its probability. The spot compresses the favorite's range (they can't win by more than 7–${m.spot}). ${SRC}`)}</p>` +
+      `<div class="sl-chart">${bars}</div></div>` +
+    actual;
+  wireInfoButtons(el);
+}
+
 // ---- view switch ---------------------------------------------------------
+function renderModeSwitch() {
+  const seg = $("#modeSwitch"); if (!seg) return;
+  const modes = [["standings", "Standings"], ["h2h", "Head-to-Head"]];
+  seg.innerHTML = modes.map(([k, l]) =>
+    `<button role="tab" aria-selected="${state.mode === k}" data-mode="${k}">${l}</button>`).join("");
+  seg.querySelectorAll("button").forEach((b) => b.onclick = () => {
+    if (state.mode === b.dataset.mode) return;
+    state.mode = b.dataset.mode;
+    if (state.mode === "h2h" && !state.h2h.league) state.h2h.league = state.league || state.data.order[0];
+    renderAll();
+  });
+}
+
 function renderAll() {
   updateFreshness(); updateRefreshButton();
   const hasData = state.data && state.data.order && state.data.order.length > 0;
+  const SECTIONS = ["#controls", "#stats", "#detailBar", "#tableCard", "#insights", "#h2h"];
   $("#emptyApp").classList.toggle("hidden", hasData);
-  if (!hasData) {
+  $("#modeSwitchWrap").classList.toggle("hidden", !hasData);
+  if (!hasData) { SECTIONS.forEach((s) => $(s).classList.add("hidden")); return; }
+  renderModeSwitch();
+
+  if (state.mode === "h2h") {
     ["#controls", "#stats", "#detailBar", "#tableCard", "#insights"].forEach((s) => $(s).classList.add("hidden"));
+    $("#h2h").classList.remove("hidden");
+    renderH2H();
     return;
   }
+  $("#h2h").classList.add("hidden");
   const standings = state.view === "standings";
   const insights = !standings && state.detailTab === "insights";
   $("#controls").classList.toggle("hidden", !standings);
