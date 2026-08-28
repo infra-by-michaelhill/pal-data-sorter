@@ -16,12 +16,12 @@ snapshot that a scheduled job (and an hourly-capped manual refresh) keeps fresh.
 - Sort by any column — **Points** (default), **Pts/Match**, **Match Wins**,
   **Losses**, **Matches**, **Win %**, **Fargo**, **Avg Opp Fargo**, or name.
 - Click a player → a **player page** with **Matches** (with bonus-point spots and
-  a per-match "played as" rating) and **Insights** (a session played-as rating,
-  games-won-vs-expected, a played-as line chart, best/off-night). Every derived
+  a per-match **performance rating**) and **Insights** (a session performance rating,
+  games-won-vs-expected, a performance-rating line chart, best/off-night). Every derived
   number has an **ⓘ** explaining it, from the FargoRate model.
 - **Leaderboard** (top-level, division + bracket aware): top-5 boards with 🥇🥈🥉
-  for the top 3 — **Overperformers** (played-as vs Fargo), **Season Form**
-  (played-as), **Points per Match**, **Game Win %** (on-table, spots removed),
+  for the top 3 — **Overperformers** (performance rating vs Fargo), **Performance Rating**,
+  **Points per Match**, **Game Win %** (on-table, spots removed),
   **Clutch** (record in 7–6 deciders, min 3), and **Toughest Schedule** (avg
   opponent Fargo). Names are clickable to the player page; minimum 5 matches to
   qualify.
@@ -29,8 +29,7 @@ snapshot that a scheduled job (and an hourly-capped manual refresh) keeps fresh.
   players in a league and see win probability, the PAL race (all races to 7 with
   the correct bonus-point spot from the Fargo gap), a full **scoreline
   probability chart** for every possible result, and their actual match if they're
-  in the same bracket. Toggle between rating by **official Fargo** and **this
-  season's form** (played-as).
+  in the same bracket. Toggle between rating by **official Fargo** and **this season's performance rating**.
 - Light/dark theme, Crucible-styled. No frameworks, **Python standard library
   only** — nothing to `pip install`.
 
@@ -115,8 +114,8 @@ maximum-likelihood fit to games won and lost).
 - **Spots removed first.** Bonus points (BP) are games the lower-rated player is
   given on the wire, so games actually won on the table = official score − BP.
 - **Win chance per game:** `p = 2^(Δ/100) / (1 + 2^(Δ/100))` (Δ = Fargo gap).
-- **Played-as (one match):** `oppFargo + 100·log₂(gamesWon / gamesLost)`.
-- **Played-as (session):** the rating where your **expected** game-wins equal
+- **Performance rating (one match):** `oppFargo + 100·log₂(gamesWon / gamesLost)`.
+- **Performance rating (session):** the rating where your **expected** game-wins equal
   your **actual** ones — the same maximum-likelihood method FargoRate uses.
 
 These are single-player performance estimates from this league's games, not

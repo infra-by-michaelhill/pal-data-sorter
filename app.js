@@ -28,7 +28,7 @@ const DETAIL_COLUMNS = [
   { key: "oppFargo", label: "Opp Fargo", type: "num" },
   { key: "score",    label: "Score",     type: "text", sortable: false },
   { key: "spot",     label: "Spot",      type: "num" },
-  { key: "playedAs", label: "Played as", type: "num" },
+  { key: "playedAs", label: "Performance", type: "num" },
   { key: "result",   label: "Result",    type: "text" },
 ];
 const DEFAULT_SORT = { key: "GP", dir: "desc" };
@@ -680,12 +680,12 @@ function renderInsights() {
     `<div class="insights-grid">` +
       // Hero verdict
       `<div class="panel">` +
-        `<p class="panel-title">Played-as rating · this session ${info("pa",
-          `<b>Played-as rating</b> is the FargoRate that best explains the games you actually won this session — the rating where your expected game-wins equal your real ones. Spots (bonus points) are removed first. ${SRC}`)}</p>` +
+        `<p class="panel-title">Performance Rating · this session ${info("pa",
+          `<b>Performance rating</b> is the FargoRate that best explains the games you actually won this session — the rating where your expected game-wins equal your real ones. Spots (bonus points) are removed first. ${SRC}`)}</p>` +
         `<div class="hero-num"><span class="big">${sessionPA}</span>` +
           `<span class="delta ${dir}">${sign}${delta}</span></div>` +
         `<p class="verdict ${dir}">${verdict}</p>` +
-        `<p class="hero-sub">Your official Fargo is <b>${official}</b>. This session you've played like a <b>${sessionPA}</b>` +
+        `<p class="hero-sub">Your official Fargo is <b>${official}</b>. This session your performance rating is <b>${sessionPA}</b>` +
           `${smallSample ? " — but it's early, so treat this as a rough read." : "."}</p>` +
       `</div>` +
       // Expected vs actual
@@ -712,10 +712,10 @@ function renderInsights() {
     // Highlights
     `<div class="highlights">` +
       (best ? `<div class="hl best"><div class="k">Best performance</div>` +
-        `<div class="v">Played like ${best.playedAs}</div>` +
+        `<div class="v">Performance ${best.playedAs}</div>` +
         `<div class="d">vs ${escapeHtml(best.opponent)} (${best.ropp}) · on-table ${best.wg}–${best.lg} · ${best.result}</div></div>` : "") +
       (worst ? `<div class="hl worst"><div class="k">Off night</div>` +
-        `<div class="v">Played like ${worst.playedAs}</div>` +
+        `<div class="v">Performance ${worst.playedAs}</div>` +
         `<div class="d">vs ${escapeHtml(worst.opponent)} (${worst.ropp}) · on-table ${worst.wg}–${worst.lg} · ${worst.result}</div></div>` : "") +
     `</div>` +
     (excluded ? `<p class="caption">${excluded} match${excluded > 1 ? "es" : ""} excluded (opponent unrated).</p>` : "");
@@ -766,7 +766,7 @@ function renderPlayedAsChart(wrap, ins) {
       `data-i="${i}" class="pa-hit"/>`).join("");
 
   wrap.innerHTML =
-    `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Played-as rating by match">` +
+    `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet" role="img" aria-label="Performance rating by match">` +
       grid + refLine + `<path class="pa-line" d="${path}"/>` + dots + xLabels +
     `</svg><div class="chart-tip" id="paTip"></div>`;
 
@@ -779,7 +779,7 @@ function renderPlayedAsChart(wrap, ins) {
       const sx = rect.left + (x(+h.dataset.i) / W) * rect.width;
       const sy = rect.top + (y(d.playedAs) / H) * rect.height;
       const wr = wrap.getBoundingClientRect();
-      tip.innerHTML = `<b>Played like ${d.playedAs}</b><br>vs ${escapeHtml(d.opponent)} (${d.ropp})<br>` +
+      tip.innerHTML = `<b>Performance ${d.playedAs}</b><br>vs ${escapeHtml(d.opponent)} (${d.ropp})<br>` +
         `on-table ${d.wg}–${d.lg} · ${d.result}${d.spotN ? ` · +${d.spotN} ${d.spotWho}` : ""}`;
       tip.style.left = (sx - wr.left) + "px";
       tip.style.top = (sy - wr.top) + "px";
@@ -852,7 +852,7 @@ function renderH2H() {
     `<div class="controls">` +
       `<div class="control-group"><span>Rate by</span><div class="segmented" id="h2hBasis">` +
         `<button data-basis="fargo" aria-selected="${state.h2h.basis === "fargo"}">Fargo</button>` +
-        `<button data-basis="form" aria-selected="${state.h2h.basis === "form"}">Season Form</button>` +
+        `<button data-basis="form" aria-selected="${state.h2h.basis === "form"}">Performance</button>` +
       `</div></div>` +
     `</div>` +
     `<div class="h2h-pickers">` +
@@ -880,7 +880,7 @@ function h2hCardHTML(p, colorClass) {
     `<div class="h2h-sub">${escapeHtml(brLabel)}${rank ? ` · Rank ${rank}` : ""}</div>` +
     `<div class="h2h-stats">` +
       `<div><span>Fargo</span><b>${f ?? "—"}</b></div>` +
-      `<div><span>Played as</span><b>${pa ?? "—"} ${arrow}</b></div>` +
+      `<div><span>Performance</span><b>${pa ?? "—"} ${arrow}</b></div>` +
       `<div><span>Record</span><b>${p.MW}–${p.ML}</b></div>` +
     `</div></div>`;
 }
@@ -941,7 +941,7 @@ function renderH2HResult() {
   }
 
   const basisNote = basis === "form" && !formAvail
-    ? ` <span class="notice">(season form unavailable — using Fargo)</span>` : "";
+    ? ` <span class="notice">(performance rating unavailable — using Fargo)</span>` : "";
 
   el.innerHTML =
     `<div class="h2h-compare">${h2hCardHTML(pa, "cA")}<div class="h2h-mid">VS</div>${h2hCardHTML(pb, "cB")}</div>` +
@@ -958,7 +958,7 @@ function renderH2HResult() {
       `<div class="meter-track"><span class="meter-a" style="width:${aPct}%"></span><span class="meter-b" style="width:${bPct}%"></span></div>` +
       `<div class="meter-labels"><span><span class="dot cA"></span>${escapeHtml(pa.name)} ${aPct}%</span>` +
         `<span>${bPct}% ${escapeHtml(pb.name)}<span class="dot cB"></span></span></div>` +
-      `<p class="verdict-line">${escapeHtml(favName)} is ${verdict}${useForm ? ", by this season's form" : ""}.</p>` +
+      `<p class="verdict-line">${escapeHtml(favName)} is ${verdict}${useForm ? ", by this season's performance" : ""}.</p>` +
     `</div>` +
     `<div class="panel"><p class="panel-title">Possible results ${info("h2hs",
       `Every final score that can happen in this race, with its probability. The spot compresses the favorite's range (they can't win by more than 7–${m.spot}). ${SRC}`)}</p>` +
@@ -975,7 +975,7 @@ const LEADERBOARDS = [
   { key: "over", title: "Overperformers", sub: "Playing furthest above their Fargo rating",
     val: (r) => r.over, fmt: (v) => `${v > 0 ? "+" : ""}${v}`,
     ctx: (r) => `played as ${r.playedAs} · Fargo ${r.fargo}` },
-  { key: "form", title: "Season Form", sub: "Highest played-as rating this season",
+  { key: "form", title: "Performance Rating", sub: "Highest performance rating this season",
     val: (r) => r.playedAs, fmt: (v) => v, ctx: (r) => `Fargo ${r.fargo}` },
   { key: "gpmp", title: "Points per Match", sub: "Game points ÷ matches played",
     val: (r) => r.GPMP, fmt: (v) => v.toFixed(2), ctx: (r) => `${r.GP} pts · ${r.MP} matches` },
@@ -1119,7 +1119,7 @@ $("#csvBtn").addEventListener("click", () => {
 function exportDetailCsv() {
   const matches = sortRows(enrichedMatches(), state.detailSort, DETAIL_COLUMNS);
   const header = ["date", "opponent", "opp_fargo", "you", "opp",
-    "bonus_points", "bp_to", "ontable_you", "ontable_opp", "played_as", "result"];
+    "bonus_points", "bp_to", "ontable_you", "ontable_opp", "performance_rating", "result"];
   const lines = [header.join(",")];
   matches.forEach((m) => lines.push([
     csvCell(m.date || m.dateISO || ""), csvCell(m.opponent), csvCell(m.oppFargo),
