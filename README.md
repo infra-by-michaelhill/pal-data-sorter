@@ -30,6 +30,9 @@ snapshot that a scheduled job (and an hourly-capped manual refresh) keeps fresh.
   the correct bonus-point spot from the Fargo gap), a full **scoreline
   probability chart** for every possible result, and their actual match if they're
   in the same bracket. Toggle between rating by **official Fargo** and **this season's performance rating**.
+- **Installable (PWA).** Add it to your home screen from the browser and it
+  launches full-screen like a native app; a service worker caches the shell for
+  instant loads and still opens to the last-seen standings when you're offline.
 - Light/dark theme, Crucible-styled. No frameworks, **Python standard library
   only** — nothing to `pip install`.
 
