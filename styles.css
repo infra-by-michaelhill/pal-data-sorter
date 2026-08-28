@@ -9,6 +9,7 @@
   --surface: 0 0% 100%;         /* elevated cards */
   --surface-2: 214 26% 94%;     /* inset / segmented / table stripe */
   --border: 214 22% 82%;
+  --border-strong: 216 16% 62%;
   --fg: 220 27% 12%;
   --muted: 218 12% 43%;
   --subtle: 218 10% 57%;
@@ -31,7 +32,7 @@
   --font-sans: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
     Helvetica, Arial, sans-serif;
   --font-mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
-  --radius: 12px;
+  --radius: 10px;
   --shadow: 0 1px 2px hsl(220 27% 12% / 0.05), 0 8px 24px hsl(220 27% 12% / 0.06);
 }
 
@@ -40,6 +41,7 @@
   --surface: 0 0% 13%;
   --surface-2: 0 0% 18%;
   --border: 0 0% 20%;
+  --border-strong: 0 0% 33%;
   --fg: 0 0% 93%;
   --muted: 0 0% 64%;
   --subtle: 0 0% 46%;
@@ -80,22 +82,26 @@ body {
 .brand .sub { color: hsl(var(--subtle)); font-weight: 500; }
 
 /* ---- Buttons -------------------------------------------------------- */
+/* Buttons — standardized to the Crucible product (rounded-md, tighter, with
+   hover + active states). */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: 8px;
-  height: 40px; padding: 0 18px; border-radius: 10px; font: inherit;
-  font-weight: 550; font-size: 0.9rem; cursor: pointer;
-  border: 1px solid transparent; transition: background .18s, color .18s, border-color .18s;
+  height: 36px; padding: 0 16px; border-radius: 6px; font: inherit;
+  font-weight: 500; font-size: 0.875rem; cursor: pointer;
+  border: 1px solid transparent; transition: background .12s, color .12s, border-color .12s;
   white-space: nowrap;
 }
-.btn:disabled { opacity: 0.55; pointer-events: none; }
+.btn:disabled { opacity: 0.5; pointer-events: none; }
 .btn-primary { background: hsl(var(--accent)); color: hsl(var(--accent-fg)); }
 .btn-primary:hover { background: hsl(var(--accent-strong)); }
+.btn-primary:active { background: hsl(var(--accent) / 0.85); }
 .btn-secondary { background: hsl(var(--surface)); color: hsl(var(--fg));
                  border-color: hsl(var(--border)); }
 .btn-secondary:hover { background: hsl(var(--surface-2)); }
+.btn-secondary:active { background: hsl(var(--surface-2)); border-color: hsl(var(--border-strong)); }
 .btn-ghost { background: transparent; color: hsl(var(--muted)); }
 .btn-ghost:hover { background: hsl(var(--surface-2)); color: hsl(var(--fg)); }
-.btn-sm { height: 34px; padding: 0 12px; font-size: 0.82rem; border-radius: 9px; }
+.btn-sm { height: 32px; padding: 0 12px; font-size: 0.82rem; }
 
 /* ---- Login screen --------------------------------------------------- */
 .login-wrap {
@@ -141,11 +147,14 @@ body {
   background: hsl(var(--sidebar)); color: hsl(var(--sidebar-fg));
   border-right: 1px solid hsl(var(--sidebar-border)); padding: 14px 12px; overflow: hidden;
 }
-.sidebar-top { display: flex; align-items: center; justify-content: space-between; padding: 4px 6px 12px; }
-.sidebar .brand { font-size: 0.98rem; gap: 8px; color: hsl(var(--sidebar-fg)); }
-.collapse-btn { width: 28px; height: 28px; border-radius: 7px; border: 0;
-  background: transparent; color: hsl(var(--sidebar-muted)); cursor: pointer; font-size: 1rem; line-height: 1;
-  flex-shrink: 0; }
+.sidebar-top { display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  padding: 4px 6px 14px; margin-bottom: 4px; border-bottom: 1px solid hsl(var(--sidebar-border)); }
+.sidebar .brand { font-size: 0.98rem; gap: 8px; color: hsl(var(--sidebar-fg)); min-width: 0; }
+.sidebar .brand .brand-name { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.collapse-btn { width: 32px; height: 32px; border-radius: 6px; border: 0; padding: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  background: transparent; color: hsl(var(--sidebar-muted)); cursor: pointer; flex-shrink: 0; }
+.collapse-btn svg { width: 16px; height: 16px; }
 .collapse-btn:hover { background: hsl(var(--sidebar-accent)); color: hsl(var(--sidebar-fg)); }
 
 /* Scope / division switcher (copied from the product's ScopeSwitcher) */
@@ -201,8 +210,7 @@ body {
 .app-shell.collapsed .scope-name,
 .app-shell.collapsed .scope-chev,
 .app-shell.collapsed .sidebar-foot .meta { display: none; }
-.app-shell.collapsed .sidebar-top { justify-content: center; }
-.app-shell.collapsed .collapse-btn { transform: rotate(180deg); }
+.app-shell.collapsed .sidebar-top { flex-direction: column; justify-content: center; gap: 10px; }
 .app-shell.collapsed .scope-btn { justify-content: center; padding: 8px; }
 .app-shell.collapsed .nav-item { justify-content: center; padding: 10px; }
 .app-shell.collapsed .foot-actions { justify-content: center; }
@@ -249,12 +257,12 @@ body {
                         text-transform: uppercase; color: hsl(var(--subtle)); }
 
 /* Segmented control */
-.segmented { display: inline-flex; padding: 4px; gap: 4px; border-radius: 11px;
+.segmented { display: inline-flex; padding: 3px; gap: 3px; border-radius: 8px;
              background: hsl(var(--surface-2)); border: 1px solid hsl(var(--border)); }
 .segmented button {
   border: 0; background: transparent; color: hsl(var(--muted));
   font: inherit; font-weight: 550; font-size: 0.85rem; padding: 7px 15px;
-  border-radius: 8px; cursor: pointer; transition: background .15s, color .15s;
+  border-radius: 6px; cursor: pointer; transition: background .15s, color .15s;
 }
 .segmented button:hover { color: hsl(var(--fg)); }
 .segmented button[aria-selected="true"] {
@@ -269,7 +277,7 @@ body {
 
 /* ---- Head-to-Head --------------------------------------------------- */
 .h2h-pickers { display: flex; align-items: center; gap: 12px; margin-bottom: 20px; flex-wrap: wrap; }
-.h2h-select { flex: 1 1 240px; min-width: 200px; height: 40px; padding: 0 12px;
+.h2h-select { flex: 1 1 240px; min-width: 200px; height: 38px; padding: 0 12px;
               border-radius: 10px; border: 1px solid hsl(var(--border));
               background: hsl(var(--surface)); color: hsl(var(--fg)); font: inherit; font-size: 0.92rem; }
 .h2h-select:focus { border-color: hsl(var(--accent)); outline: none; }

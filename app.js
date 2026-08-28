@@ -280,7 +280,19 @@ function renderSidebar() {
   // collapse
   $("#app").classList.toggle("collapsed", state.collapsed);
   const cb = $("#collapseBtn");
-  if (cb) cb.onclick = () => { state.collapsed = !state.collapsed; store.saveCollapsed(state.collapsed); $("#app").classList.toggle("collapsed", state.collapsed); };
+  if (cb) {
+    const chevL = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg>';
+    const chevR = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m9 18 6-6-6-6"/></svg>';
+    cb.innerHTML = state.collapsed ? chevR : chevL;
+    cb.setAttribute("aria-label", state.collapsed ? "Expand sidebar" : "Collapse sidebar");
+    cb.onclick = () => {
+      state.collapsed = !state.collapsed;
+      store.saveCollapsed(state.collapsed);
+      $("#app").classList.toggle("collapsed", state.collapsed);
+      cb.innerHTML = state.collapsed ? chevR : chevL;
+      cb.setAttribute("aria-label", state.collapsed ? "Expand sidebar" : "Collapse sidebar");
+    };
+  }
 }
 document.addEventListener("click", (e) => {
   if (!e.target.closest("#divisionSwitch")) { const m = $("#divisionMenu"); if (m) m.classList.add("hidden"); }
