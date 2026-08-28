@@ -149,6 +149,25 @@ def discover_seasons(client):
     return seasons
 
 
+def discover_schedule_ids(html, bracket_keys):
+    """Map each standings bracket to its schedule container id. The season page
+    renders, per bracket, a standings table then a `schedule-container-{id}`; PAL
+    does NOT order the ids to match bracket letters (A can be 23, B can be 24), so
+    pair each container with the nearest preceding "BRACKET X" heading by position."""
+    scheds = [(m.start(), m.group(1)) for m in re.finditer(r"schedule-container-(\d+)", html)]
+    keys = list(bracket_keys)
+    out = {}
+    if len(scheds) == 1 and len(keys) == 1:      # single unlabeled bracket (e.g. scotch)
+        out[keys[0]] = scheds[0][1]
+        return out
+    for pos, sid in scheds:
+        letters = re.findall(r"BRACKET\s+([A-Z])\b", html[:pos])
+        label = letters[-1] if letters else None
+        if label in keys:
+            out[label] = sid
+    return out
+
+
 def build_dataset(client):
     seasons = discover_seasons(client)
     if not seasons:
@@ -161,7 +180,8 @@ def build_dataset(client):
             continue
         key = f"s{s['season']}"
         order.append(key)
-        leagues[key] = {"name": s["name"], "season": s["season"], "brackets": brackets}
+        leagues[key] = {"name": s["name"], "season": s["season"], "brackets": brackets,
+                        "schedIds": discover_schedule_ids(html, list(brackets.keys()))}
     if not leagues:
         raise RuntimeError("Active seasons were found but none have standings yet.")
     return {
@@ -169,6 +189,59 @@ def build_dataset(client):
         "order": order,
         "leagues": leagues,
     }
+
+
+# ---------------------------------------------------------------------------
+# Schedule parsing (bracket-wide weekly fixtures)
+# ---------------------------------------------------------------------------
+# PAL builds the fixture list one week at a time, so this endpoint holds every
+# match posted so far — played ones carry `match-card-scored` + an "N : N" score;
+# future weeks, once posted, come back unscored. Cards have names only (no ids),
+# so resolve each name back to a team_id via the bracket roster.
+_SCHED_NAME = re.compile(r'basis-3/7">\s*(.*?)\s*</div>', re.S)
+_SCHED_SCORE = re.compile(r"min-w-10[^>]*>\s*(\d+)\s*:\s*(\d+)")
+
+
+def parse_schedule(items, roster_key):
+    out = []
+    for it in items:
+        h = it.get("html", "")
+        names = _SCHED_NAME.findall(h)
+        if len(names) < 2:
+            continue
+        a = re.sub(r"\s+", " ", names[0]).strip()
+        b = re.sub(r"\s+", " ", names[1]).strip()
+        sm = _SCHED_SCORE.search(h)
+        played = ("match-card-scored" in h) and bool(sm)
+        out.append({
+            "ts": it.get("match_date"),
+            "aName": a, "bName": b,
+            "aTid": roster_key.get(_team_key(a)),
+            "bTid": roster_key.get(_team_key(b)),
+            "aScore": int(sm.group(1)) if played else None,
+            "bScore": int(sm.group(2)) if played else None,
+            "played": played,
+        })
+    return out
+
+
+def fetch_schedules(dataset, cookie):
+    """Attach `schedule` (per bracket) to every league in the dataset and drop the
+    internal schedIds. One wide-range request per bracket (a handful total)."""
+    start = (_now() - datetime.timedelta(days=400)).strftime("%Y-%m-%dT00:00:00.000Z")
+    end = (_now() + datetime.timedelta(days=200)).strftime("%Y-%m-%dT23:59:59.999Z")
+    for key in dataset["order"]:
+        lg = dataset["leagues"][key]
+        sched = {}
+        for bkey, sid in lg.pop("schedIds", {}).items():
+            roster_key = {_team_key(r["name"]): r["team_id"] for r in lg["brackets"].get(bkey, [])}
+            try:
+                url = (f"{BASE}/league/ajax/bracket/{sid}/schedule_rendered"
+                       f"?start_date={start}&end_date={end}")
+                sched[bkey] = parse_schedule(json.loads(get_with_cookie(url, cookie)), roster_key)
+            except Exception:
+                sched[bkey] = []
+        lg["schedule"] = sched
 
 
 # ---------------------------------------------------------------------------
@@ -313,6 +386,8 @@ def build_snapshot():
         for tid, val in ex.map(one, players):
             if val:
                 by_id[tid] = val
+
+    fetch_schedules(dataset, cookie)   # bracket-wide weekly fixtures
 
     return {
         "fetchedAt": _now().isoformat(timespec="seconds"),

@@ -43,8 +43,9 @@ const state = {
   granular: { loaded: false, byId: {}, fetchedAt: null },
   refreshing: false,
   hiddenCols: new Set(),   // column keys the user chose to hide
-  mode: "standings",       // "standings" | "h2h"
+  mode: "standings",       // "standings" | "schedule" | "h2h" | "leaderboard"
   h2h: { a: null, b: null, basis: "fargo" },  // basis: "fargo" | "form"; league = global state.league
+  schedule: { weekStart: null },   // ms of the Monday of the shown week (null = default to live edge)
   collapsed: false,
 };
 
@@ -626,6 +627,11 @@ function renderDetailTable() {
       renderDetailTable();
     },
     cell: detailCell,
+    rowClick: (m) => {
+      const league = state.detail.league || state.league;
+      const opp = tidByName(league, m.opponent);
+      if (opp != null) openH2H(state.detail.teamId, opp, league);
+    },
   });
 }
 
@@ -972,6 +978,193 @@ function renderH2HResult() {
   wireInfoButtons(el);
 }
 
+// ---- Head-to-Head prefill (the hub every match links to) -----------------
+function teamKey(name) {   // order-insensitive so scotch teams match either way
+  return String(name).split("/").map((s) => s.trim().toUpperCase().replace(/\s+/g, " "))
+    .filter(Boolean).sort().join("/");
+}
+function tidByName(league, name) {
+  const key = teamKey(name);
+  const p = leaguePlayers(league).find((x) => teamKey(x.name) === key);
+  return p ? p.team_id : null;
+}
+function openH2H(aTid, bTid, league) {
+  if (league) state.league = league;
+  state.mode = "h2h";
+  state.view = "standings"; state.detail = null;
+  state.h2h.a = aTid != null ? +aTid : null;
+  state.h2h.b = bTid != null ? +bTid : null;
+  state.h2h.basis = "fargo";
+  renderAll();
+}
+
+// ---- Schedule (bracket-wide weekly fixtures) -----------------------------
+const DAY_MS = 86400000;
+function weekStartOf(ts) {                 // ms of the Monday 00:00 (local) of that week
+  const x = new Date(ts); x.setHours(0, 0, 0, 0);
+  x.setDate(x.getDate() - ((x.getDay() + 6) % 7));
+  return x.getTime();
+}
+function scheduleFor(league, bracket) {
+  const lg = state.data.leagues[league];
+  const sched = (lg && lg.schedule) || {};
+  const labels = bracketsFor(league);
+  const keys = (bracket === "__both__" || labels.length < 2) ? labels : [bracket];
+  const out = [];
+  keys.forEach((k) => (sched[k] || []).forEach((m) => out.push({ ...m, bracket: k })));
+  return out.sort((a, b) => new Date(a.ts) - new Date(b.ts));
+}
+function scheduleWeeks(matches) {
+  return [...new Set(matches.map((m) => weekStartOf(m.ts)))].sort((a, b) => a - b);
+}
+function defaultWeek(matches, weeks) {
+  const up = matches.filter((m) => !m.played).map((m) => weekStartOf(m.ts)).sort((a, b) => a - b);
+  if (up.length) return up[0];                             // soonest unplayed week = the live edge
+  return weeks.length ? weeks[weeks.length - 1] : null;    // else most recent week of results
+}
+
+function schMatchHTML(m) {
+  const fa = fargoFor(m.aTid), fb = fargoFor(m.bTid);
+  const clickable = m.aTid != null && m.bTid != null;
+  const t = new Date(m.ts).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const aPct = (fa != null && fb != null) ? Math.round(matchup(fa, fb, fa, fb).aWin * 100) : null;
+  const aWin = m.played && m.aScore > m.bScore, bWin = m.played && m.bScore > m.aScore;
+  const meta = (f) => f != null ? `<i>${f}</i>` : "";
+  const mid = m.played ? `<span class="sch-score">${m.aScore}–${m.bScore}</span>` : `<span class="sch-vs">vs</span>`;
+
+  const bar = aPct != null
+    ? `<div class="meter-track sch-meter"><span class="meter-a" style="width:${aPct}%"></span>` +
+      `<span class="meter-b" style="width:${100 - aPct}%"></span></div>` : "";
+
+  let note = "";
+  if (m.played) {
+    const winner = (aWin ? m.aName : m.bName).split("/")[0];
+    const favA = aPct != null && aPct >= 50;
+    const upset = aPct != null && Math.abs(aPct - 50) >= 15 && ((favA && bWin) || (!favA && aWin));
+    note = `<span class="sch-won">${escapeHtml(winner)} won</span>` +
+      (upset ? `<span class="sch-tag upset">Upset</span>` : "");
+  } else if (aPct != null) {
+    const favName = (aPct >= 50 ? m.aName : m.bName).split("/")[0];
+    note = `<span class="sch-fav">${escapeHtml(favName)} favored ${Math.max(aPct, 100 - aPct)}%</span>`;
+  }
+
+  const tag = m.played ? `<span class="sch-tag final">Final</span>` : `<span class="sch-tag up">Upcoming</span>`;
+  const attrs = clickable ? ` data-a="${m.aTid}" data-b="${m.bTid}" role="button" tabindex="0"` : "";
+  return `<div class="sch-card${m.played ? " played" : ""}${clickable ? " clickable" : ""}"${attrs}>` +
+      `<div class="sch-top"><span class="sch-time">${t}</span>${tag}</div>` +
+      `<div class="sch-row">` +
+        `<span class="sch-team a${aWin ? " win" : ""}"><span class="dot cA"></span><span class="sch-nm">${escapeHtml(m.aName)}</span> ${meta(fa)}</span>` +
+        mid +
+        `<span class="sch-team b${bWin ? " win" : ""}"><span class="sch-nm">${escapeHtml(m.bName)}</span> ${meta(fb)}<span class="dot cB"></span></span>` +
+      `</div>` + bar +
+      (note ? `<div class="sch-note">${note}</div>` : "") +
+    `</div>`;
+}
+
+function wireSchBracket(box) {
+  const seg = box.querySelector("#schBracket");
+  if (seg) seg.querySelectorAll("button").forEach((b) => b.onclick = () => {
+    state.bracket = b.dataset.b; state.schedule.weekStart = null; renderSchedule();
+  });
+}
+
+function renderSchedule() {
+  const box = $("#schedule");
+  const league = state.league;
+  const labels = bracketsFor(league);
+  const all = scheduleFor(league, state.bracket);
+  const weeks = scheduleWeeks(all);
+
+  let bracketBar = "";
+  if (labels.length > 1) {
+    const opts = [...labels.map((l) => ({ v: l, t: l.length === 1 ? "Bracket " + l : l })), { v: "__both__", t: "Both" }];
+    bracketBar = `<div class="controls"><div class="control-group"><span>Bracket</span>` +
+      `<div class="segmented" id="schBracket">` +
+      opts.map((o) => `<button data-b="${o.v}" aria-selected="${state.bracket === o.v}">${escapeHtml(o.t)}</button>`).join("") +
+      `</div></div></div>`;
+  }
+
+  if (!all.length) {
+    box.innerHTML = bracketBar + `<div class="panel"><p class="caption">No schedule has been posted for this division yet.</p></div>`;
+    wireSchBracket(box); return;
+  }
+
+  let wk = state.schedule.weekStart;
+  if (wk == null || !weeks.includes(wk)) wk = defaultWeek(all, weeks);
+  state.schedule.weekStart = wk;
+  const idx = weeks.indexOf(wk);
+
+  const start = new Date(wk), end = new Date(wk + 6 * DAY_MS);
+  const fmtD = (d) => d.toLocaleDateString([], { month: "short", day: "numeric" });
+
+  const byDay = new Map();
+  all.filter((m) => weekStartOf(m.ts) === wk).forEach((m) => {
+    const d = new Date(m.ts); d.setHours(0, 0, 0, 0);
+    const k = d.getTime();
+    (byDay.get(k) || byDay.set(k, []).get(k)).push(m);
+  });
+  const days = [...byDay.keys()].sort((a, b) => a - b).map((k) => {
+    const dh = new Date(k).toLocaleDateString([], { weekday: "long", month: "short", day: "numeric" });
+    return `<div class="sch-day"><div class="sch-day-h">${dh}</div>${byDay.get(k).map(schMatchHTML).join("")}</div>`;
+  }).join("");
+
+  const nav = `<div class="sch-nav">` +
+      `<button class="btn btn-secondary btn-sm sch-arrow" id="schPrev"${idx <= 0 ? " disabled" : ""} aria-label="Previous week">‹</button>` +
+      `<div class="sch-week"><span class="sch-week-label">${fmtD(start)} – ${fmtD(end)}</span>` +
+        `<span class="sch-week-sub">Week ${idx + 1} of ${weeks.length}</span></div>` +
+      `<button class="btn btn-secondary btn-sm sch-arrow" id="schNext"${idx >= weeks.length - 1 ? " disabled" : ""} aria-label="Next week">›</button>` +
+      `<button class="btn btn-ghost btn-sm" id="schLive" title="Jump to the latest week">Now</button>` +
+    `</div>`;
+
+  box.innerHTML = bracketBar + nav + `<div class="sch-list">${days}</div>`;
+
+  wireSchBracket(box);
+  if ($("#schPrev")) $("#schPrev").onclick = () => { if (idx > 0) { state.schedule.weekStart = weeks[idx - 1]; renderSchedule(); } };
+  if ($("#schNext")) $("#schNext").onclick = () => { if (idx < weeks.length - 1) { state.schedule.weekStart = weeks[idx + 1]; renderSchedule(); } };
+  if ($("#schLive")) $("#schLive").onclick = () => { state.schedule.weekStart = null; renderSchedule(); };
+  box.querySelectorAll(".sch-card.clickable").forEach((c) => {
+    const fire = () => openH2H(+c.dataset.a, +c.dataset.b, league);
+    c.onclick = fire;
+    c.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fire(); } };
+  });
+}
+
+// ---- Upcoming matches inside the player page (Matches tab) ---------------
+function upcomingForPlayer(league, tid) {
+  const sched = (state.data.leagues[league] && state.data.leagues[league].schedule) || {};
+  const out = [];
+  Object.keys(sched).forEach((k) => sched[k].forEach((m) => {
+    if (m.played) return;
+    if (m.aTid === tid) out.push({ ts: m.ts, oppTid: m.bTid, oppName: m.bName });
+    else if (m.bTid === tid) out.push({ ts: m.ts, oppTid: m.aTid, oppName: m.aName });
+  }));
+  return out.sort((a, b) => new Date(a.ts) - new Date(b.ts));
+}
+function renderDetailUpcoming() {
+  const box = $("#detailUpcoming");
+  const league = state.detail.league || state.league;
+  const ups = upcomingForPlayer(league, state.detail.teamId);
+  if (!ups.length) { box.classList.add("hidden"); box.innerHTML = ""; return; }
+  const rows = ups.map((u) => {
+    const d = new Date(u.ts);
+    const when = d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }) +
+      " · " + d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+    const f = fargoFor(u.oppTid);
+    const attrs = u.oppTid != null ? ` data-opp="${u.oppTid}" role="button" tabindex="0"` : "";
+    return `<div class="up-row${u.oppTid != null ? " clickable" : ""}"${attrs}>` +
+      `<span class="up-when">${when}</span>` +
+      `<span class="up-opp">vs ${escapeHtml(u.oppName)}${f != null ? ` <i>${f}</i>` : ""}</span>` +
+      `<span class="up-go">Preview →</span></div>`;
+  }).join("");
+  box.classList.remove("hidden");
+  box.innerHTML = `<div class="up-card"><div class="up-title">Upcoming</div>${rows}</div>`;
+  box.querySelectorAll(".up-row.clickable").forEach((r) => {
+    const fire = () => openH2H(state.detail.teamId, +r.dataset.opp, league);
+    r.onclick = fire;
+    r.onkeydown = (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); fire(); } };
+  });
+}
+
 // ---- Leaderboard ---------------------------------------------------------
 const LB_MIN = 5;   // minimum matches to qualify
 const LB_TOP = 5;
@@ -1063,20 +1256,23 @@ function renderLeaderboard() {
 function renderAll() {
   updateFreshness(); updateRefreshButton();
   const hasData = state.data && state.data.order && state.data.order.length > 0;
-  const SECTIONS = ["#controls", "#stats", "#detailBar", "#tableCard", "#insights", "#h2h", "#leaderboard"];
+  const SECTIONS = ["#controls", "#stats", "#detailBar", "#detailUpcoming", "#tableCard",
+                    "#insights", "#h2h", "#leaderboard", "#schedule"];
   $("#emptyApp").classList.toggle("hidden", hasData);
   $("#sidebar").classList.toggle("hidden", !hasData);
   if (!hasData) { SECTIONS.forEach((s) => $(s).classList.add("hidden")); return; }
   renderSidebar();
 
-  if (state.mode === "h2h" || state.mode === "leaderboard") {
+  if (state.mode === "h2h" || state.mode === "leaderboard" || state.mode === "schedule") {
     SECTIONS.forEach((s) => $(s).classList.add("hidden"));
     if (state.mode === "h2h") { $("#h2h").classList.remove("hidden"); renderH2H(); }
+    else if (state.mode === "schedule") { $("#schedule").classList.remove("hidden"); renderSchedule(); }
     else { $("#leaderboard").classList.remove("hidden"); renderLeaderboard(); }
     return;
   }
   $("#h2h").classList.add("hidden");
   $("#leaderboard").classList.add("hidden");
+  $("#schedule").classList.add("hidden");
   const standings = state.view === "standings";
   const insights = !standings && state.detailTab === "insights";
   $("#controls").classList.toggle("hidden", !standings);
@@ -1085,11 +1281,13 @@ function renderAll() {
   $("#tableCard").classList.toggle("hidden", insights);
   $("#insights").classList.toggle("hidden", !insights);
   if (standings) {
+    $("#detailUpcoming").classList.add("hidden");
     renderBracketSeg(); renderColumnMenu();
     renderStats(); renderStandingsTable();
   } else {
     renderDetailBar();
-    if (insights) renderInsights(); else renderDetailTable();
+    if (insights) { $("#detailUpcoming").classList.add("hidden"); renderInsights(); }
+    else { renderDetailUpcoming(); renderDetailTable(); }
   }
 }
 

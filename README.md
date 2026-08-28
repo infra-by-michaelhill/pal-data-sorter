@@ -25,6 +25,13 @@ snapshot that a scheduled job (and an hourly-capped manual refresh) keeps fresh.
   **Clutch** (record in hill-hill games, min 3), and **Toughest Schedule** (avg
   opponent Fargo). Names are clickable to the player page; minimum 5 matches to
   qualify.
+- **Schedule** (top-level, division + bracket aware): the week-by-week match slate,
+  each fixture overlaid with the Fargo win-probability bar and — once played — the
+  result, with an **Upset** tag when the underdog won. Opens on the live edge (the
+  soonest week with an unplayed match). PAL posts fixtures a week at a time, so
+  upcoming matches appear here as each week is released. Every match is tappable →
+  Head-to-Head with both players prefilled; the player page lists a player's
+  **Upcoming** matches the same way.
 - **Head-to-Head** (top-level mode, or "Compare" from a player page): pick any two
   players in a league and see win probability, the PAL race (all races to 7 with
   the correct bonus-point spot from the Fargo gap), a full **scoreline

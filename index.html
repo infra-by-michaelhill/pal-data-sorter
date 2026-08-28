@@ -51,6 +51,14 @@
           </svg>
           <span class="nav-label">Standings</span>
         </button>
+        <button class="nav-item" data-mode="schedule">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="18" rx="2"></rect>
+            <path d="M16 2v4M8 2v4M3 10h18"></path>
+          </svg>
+          <span class="nav-label">Schedule</span>
+        </button>
         <button class="nav-item" data-mode="h2h">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
                stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
@@ -110,6 +118,7 @@
       <div class="container">
         <div id="h2h" class="hidden"></div>
         <div id="leaderboard" class="hidden"></div>
+        <div id="schedule" class="hidden"></div>
 
         <div class="controls" id="controls">
           <div class="control-group" id="bracketGroup">
@@ -128,6 +137,8 @@
         </div>
 
         <div class="detailbar hidden" id="detailBar"></div>
+
+        <div id="detailUpcoming" class="hidden"></div>
 
         <div class="stats" id="stats"></div>
 
@@ -157,6 +168,12 @@
             <line x1="16" y1="20" x2="16" y2="14"></line><line x1="20" y1="20" x2="20" y2="8"></line>
           </svg>
           <span>Standings</span>
+        </button>
+        <button class="tab-item" data-mode="schedule">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="18" rx="2"></rect><path d="M16 2v4M8 2v4M3 10h18"></path>
+          </svg>
+          <span>Schedule</span>
         </button>
         <button class="tab-item" data-mode="h2h">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
