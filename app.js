@@ -64,16 +64,16 @@ const store = {
 // ---- theme ---------------------------------------------------------------
 function applyTheme(t) {
   document.documentElement.setAttribute("data-theme", t);
-  $("#themeBtn").textContent = t === "dark" ? "☀️" : "🌙";
+  document.querySelectorAll(".theme-toggle").forEach((b) => { b.textContent = t === "dark" ? "☀️" : "🌙"; });
 }
 function initTheme() {
   const t = store.theme() || (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light");
   applyTheme(t);
 }
-$("#themeBtn").addEventListener("click", () => {
+document.querySelectorAll(".theme-toggle").forEach((b) => b.addEventListener("click", () => {
   const next = document.documentElement.getAttribute("data-theme") === "dark" ? "light" : "dark";
   store.saveTheme(next); applyTheme(next);
-});
+}));
 
 // ---- formatting ----------------------------------------------------------
 function escapeHtml(s) {
@@ -120,6 +120,7 @@ function renderTable(columns, rows, opts) {
   cols.forEach((c) => {
     const th = document.createElement("th");
     if (c.type === "text" || c.type === "date" || c.type === "rank") th.className = "text";
+    th.classList.add("col-" + c.key);
     const sortable = c.sortable !== false && c.type !== "rank" && opts.onSort;
     if (sortable) {
       const active = opts.sortState.key === c.key;
@@ -141,6 +142,7 @@ function renderTable(columns, rows, opts) {
   rows.forEach((r, i) => {
     const tr = document.createElement("tr");
     tr.innerHTML = cols.map((c) => opts.cell(r, c, i)).join("");
+    tr.querySelectorAll("td").forEach((td, idx) => td.classList.add("col-" + cols[idx].key));
     if (opts.rowClick) { tr.classList.add("row-click"); tr.onclick = () => opts.rowClick(r); }
     tbody.appendChild(tr);
   });
@@ -161,7 +163,7 @@ async function triggerRefresh() {
 
 // ---- single manual refresh (server scrapes; capped at once per hour) ------
 const COOLDOWN_MS = 60 * 60 * 1000;
-$("#refreshBtn").addEventListener("click", doRefresh);
+document.querySelectorAll(".refresh-btn").forEach((b) => b.addEventListener("click", doRefresh));
 
 async function doRefresh() {
   if (state.refreshing) return;
@@ -189,16 +191,16 @@ function cooldownRemaining() {
   return Math.max(0, COOLDOWN_MS - (Date.now() - new Date(state.granular.fetchedAt).getTime()));
 }
 function updateRefreshButton() {
-  const btn = $("#refreshBtn"); if (!btn) return;
-  if (state.refreshing) { btn.disabled = true; btn.textContent = "Refreshing…"; return; }
   const wait = cooldownRemaining();
-  if (wait > 0) { btn.disabled = true; btn.textContent = `Refresh in ${Math.ceil(wait / 60000)}m`; }
-  else { btn.disabled = false; btn.textContent = "Refresh"; }
+  document.querySelectorAll(".refresh-btn").forEach((btn) => {
+    if (state.refreshing) { btn.disabled = true; btn.textContent = "Refreshing…"; }
+    else if (wait > 0) { btn.disabled = true; btn.textContent = `Refresh in ${Math.ceil(wait / 60000)}m`; }
+    else { btn.disabled = false; btn.textContent = "Refresh"; }
+  });
 }
 let _metaTimer = null;
 function flashMeta(msg) {
-  const meta = $("#fetchedMeta"); if (!meta) return;
-  meta.textContent = msg;
+  document.querySelectorAll(".freshness").forEach((m) => { m.textContent = msg; });
   clearTimeout(_metaTimer); _metaTimer = setTimeout(updateFreshness, 4000);
 }
 
@@ -219,11 +221,11 @@ function onData(snap, opts = {}) {
   renderAll();
 }
 
-// the one "last updated" indicator
+// the one "last updated" indicator (mirrored to sidebar + mobile top bar)
 function updateFreshness() {
-  const meta = $("#fetchedMeta"); if (!meta) return;
-  if (state.refreshing) { meta.textContent = "Refreshing… (this can take a minute or two)"; return; }
-  meta.textContent = state.granular.fetchedAt ? `Updated ${relAge(state.granular.fetchedAt)}` : "No data yet";
+  const txt = state.refreshing ? "Refreshing… (this can take a minute or two)"
+    : state.granular.fetchedAt ? `Updated ${relAge(state.granular.fetchedAt)}` : "No data yet";
+  document.querySelectorAll(".freshness").forEach((m) => { m.textContent = txt; });
 }
 function showTopProgress(on) { $("#topProgress").classList.toggle("hidden", !on); }
 
@@ -247,33 +249,36 @@ const ICON_BUILDING = '<svg class="scope-icon" viewBox="0 0 24 24" fill="none" s
 const ICON_CHEV = '<svg class="scope-chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m7 15 5 5 5-5"/><path d="m7 9 5-5 5 5"/></svg>';
 const ICON_CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>';
 
+// crucible-style scope switcher, rendered into any container (sidebar + mobile)
+function renderScope(container) {
+  if (!container) return;
+  const name = state.data.leagues[state.league] ? state.data.leagues[state.league].name : "—";
+  container.innerHTML =
+    `<button class="scope-btn" aria-haspopup="listbox" aria-expanded="false" title="Division: ${escapeHtml(name)}">` +
+      ICON_BUILDING +
+      `<span class="scope-text"><span class="scope-cap">Division</span><span class="scope-name">${escapeHtml(name)}</span></span>` +
+      ICON_CHEV +
+    `</button>` +
+    `<div class="scope-menu hidden" role="listbox">` +
+      state.data.order.map((k) =>
+        `<button class="scope-opt" role="option" data-league="${k}">` +
+        `<span class="check${k === state.league ? "" : " hidden-check"}">${ICON_CHECK}</span>` +
+        `<span>${escapeHtml(state.data.leagues[k].name)}</span></button>`).join("") +
+    `</div>`;
+  const menu = container.querySelector(".scope-menu");
+  container.querySelector(".scope-btn").onclick = (e) => { e.stopPropagation(); menu.classList.toggle("hidden"); };
+  menu.querySelectorAll(".scope-opt").forEach((o) => o.onclick = () => {
+    menu.classList.add("hidden");
+    const k = o.dataset.league;
+    if (k !== state.league) { state.league = k; pickDefaultBracket(); state.h2h.a = null; state.h2h.b = null; renderAll(); }
+  });
+}
+
 function renderSidebar() {
-  // division switcher (crucible scope-switcher style)
-  const sw = $("#divisionSwitch");
-  if (sw) {
-    const name = state.data.leagues[state.league] ? state.data.leagues[state.league].name : "—";
-    sw.innerHTML =
-      `<button class="scope-btn" id="divisionBtn" aria-haspopup="listbox" aria-expanded="false" title="Division: ${escapeHtml(name)}">` +
-        ICON_BUILDING +
-        `<span class="scope-text"><span class="scope-cap">Division</span><span class="scope-name">${escapeHtml(name)}</span></span>` +
-        ICON_CHEV +
-      `</button>` +
-      `<div class="scope-menu hidden" id="divisionMenu" role="listbox">` +
-        state.data.order.map((k) =>
-          `<button class="scope-opt" role="option" data-league="${k}">` +
-          `<span class="check${k === state.league ? "" : " hidden-check"}">${ICON_CHECK}</span>` +
-          `<span>${escapeHtml(state.data.leagues[k].name)}</span></button>`).join("") +
-      `</div>`;
-    const menu = $("#divisionMenu");
-    $("#divisionBtn").onclick = (e) => { e.stopPropagation(); menu.classList.toggle("hidden"); };
-    menu.querySelectorAll(".scope-opt").forEach((o) => o.onclick = () => {
-      menu.classList.add("hidden");
-      const k = o.dataset.league;
-      if (k !== state.league) { state.league = k; pickDefaultBracket(); state.h2h.a = null; state.h2h.b = null; renderAll(); }
-    });
-  }
-  // nav items
-  document.querySelectorAll("#sidebarNav .nav-item").forEach((b) => {
+  renderScope($("#divisionSwitch"));
+  renderScope($("#divisionSwitchMobile"));
+  // nav items — sidebar + mobile tab bar (all [data-mode] triggers)
+  document.querySelectorAll("[data-mode]").forEach((b) => {
     b.setAttribute("aria-current", state.mode === b.dataset.mode ? "page" : "false");
     b.onclick = () => {
       const target = b.dataset.mode;
@@ -301,7 +306,7 @@ function renderSidebar() {
   }
 }
 document.addEventListener("click", (e) => {
-  if (!e.target.closest("#divisionSwitch")) { const m = $("#divisionMenu"); if (m) m.classList.add("hidden"); }
+  if (!e.target.closest(".scope-switch")) document.querySelectorAll(".scope-menu").forEach((m) => m.classList.add("hidden"));
 });
 
 function renderBracketSeg() {
@@ -981,9 +986,9 @@ const LEADERBOARDS = [
     val: (r) => r.GPMP, fmt: (v) => v.toFixed(2), ctx: (r) => `${r.GP} pts · ${r.MP} matches` },
   { key: "gamewin", title: "Game Win %", sub: "Games won on the table (spots removed)",
     val: (r) => r.gameWin, fmt: (v) => v.toFixed(1) + "%", ctx: (r) => `${r.MW}–${r.ML} matches` },
-  { key: "clutch", title: "Clutch", sub: "Record in deciding (7–6) games",
+  { key: "clutch", title: "Clutch", sub: "Record in hill-hill (deciding) games",
     val: (r) => r.clutch, fmt: (v) => v.toFixed(0) + "%", tie: (r) => r.closeN,
-    ctx: (r) => `${r.closeW}–${r.closeL} in 7–6 games` },
+    ctx: (r) => `${r.closeW}–${r.closeL} in hill-hill games` },
   { key: "sos", title: "Toughest Schedule", sub: "Highest average opponent Fargo",
     val: (r) => r.avgOpp, fmt: (v) => Math.round(v), ctx: (r) => `${r.MP} matches played` },
 ];
@@ -1003,7 +1008,7 @@ function leaderboardRows() {
     let wg = 0, lg = 0, closeN = 0, closeW = 0;
     (g.matches || []).forEach((m) => {
       if (m.oppFargo != null) { wg += m.my - (m.myBp || 0); lg += m.opp - (m.oppBp || 0); }
-      if (Math.abs(m.my - m.opp) === 1 && Math.max(m.my, m.opp) === 7) {  // 7–6 decider
+      if (Math.abs(m.my - m.opp) === 1 && Math.max(m.my, m.opp) === 7) {  // 7–6 = hill-hill (both on the hill)
         closeN++; if (m.my > m.opp) closeW++;
       }
     });

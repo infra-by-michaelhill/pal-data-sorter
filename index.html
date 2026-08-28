@@ -66,16 +66,37 @@
       </nav>
 
       <div class="sidebar-foot">
-        <div class="meta" id="fetchedMeta"></div>
+        <div class="meta freshness"></div>
         <div class="foot-actions">
-          <button class="btn btn-secondary btn-sm" id="refreshBtn">Refresh</button>
-          <button class="btn btn-ghost btn-sm" id="themeBtn" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+          <button class="btn btn-secondary btn-sm refresh-btn">Refresh</button>
+          <button class="btn btn-ghost btn-sm theme-toggle" title="Toggle theme" aria-label="Toggle theme">🌙</button>
         </div>
       </div>
     </aside>
 
     <!-- ===== Main content ===== -->
     <main class="main" id="main">
+      <!-- Mobile-only top bar (brand + division + refresh + theme) -->
+      <header class="mobile-top">
+        <div class="mobile-top-row">
+          <div class="brand">
+            <svg viewBox="0 0 100 100" width="20" height="20" aria-hidden="true">
+              <g fill="currentColor">
+                <path d="M 14 18 L 86 18 L 58 50 L 42 50 Z"></path>
+                <path d="M 42 58 L 58 58 L 50 86 Z"></path>
+              </g>
+            </svg>
+            <span class="brand-name">PAL Data Sorter</span>
+          </div>
+          <span class="spacer"></span>
+          <button class="btn btn-secondary btn-sm refresh-btn">Refresh</button>
+          <button class="btn btn-ghost btn-sm theme-toggle" title="Toggle theme" aria-label="Toggle theme">🌙</button>
+        </div>
+        <div class="mobile-top-row2">
+          <div id="divisionSwitchMobile" class="scope-switch"></div>
+        </div>
+      </header>
+
       <div id="topProgress" class="top-progress hidden"><div class="bar" id="topBar"></div></div>
 
       <div class="container">
@@ -119,6 +140,31 @@
           <p class="sub">Hit <b>Refresh</b> to pull the latest standings, or wait for the daily update.</p>
         </div>
       </div>
+
+      <!-- Mobile-only bottom tab bar -->
+      <nav class="mobile-tabs" aria-label="Views">
+        <button class="tab-item" data-mode="standings">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true">
+            <line x1="4" y1="20" x2="4" y2="11"></line><line x1="10" y1="20" x2="10" y2="4"></line>
+            <line x1="16" y1="20" x2="16" y2="14"></line><line x1="20" y1="20" x2="20" y2="8"></line>
+          </svg>
+          <span>Standings</span>
+        </button>
+        <button class="tab-item" data-mode="h2h">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 7 L10 12 L4 17"></path><path d="M20 7 L14 12 L20 17"></path>
+          </svg>
+          <span>Head-to-Head</span>
+        </button>
+        <button class="tab-item" data-mode="leaderboard">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M6 9H4.5a2.5 2.5 0 0 1 0-5H6"></path><path d="M18 9h1.5a2.5 2.5 0 0 0 0-5H18"></path>
+            <path d="M4 22h16"></path><path d="M10 14.66V17c0 .55-.47.98-.97 1.21C7.85 18.75 7 20.24 7 22"></path>
+            <path d="M14 14.66V17c0 .55.47.98.97 1.21C16.15 18.75 17 20.24 17 22"></path><path d="M18 2H6v7a6 6 0 0 0 12 0V2Z"></path>
+          </svg>
+          <span>Leaderboard</span>
+        </button>
+      </nav>
     </main>
   </section>
 

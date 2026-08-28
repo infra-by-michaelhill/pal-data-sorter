@@ -22,7 +22,7 @@ snapshot that a scheduled job (and an hourly-capped manual refresh) keeps fresh.
 - **Leaderboard** (top-level, division + bracket aware): top-5 boards with 🥇🥈🥉
   for the top 3 — **Overperformers** (performance rating vs Fargo), **Performance Rating**,
   **Points per Match**, **Game Win %** (on-table, spots removed),
-  **Clutch** (record in 7–6 deciders, min 3), and **Toughest Schedule** (avg
+  **Clutch** (record in hill-hill games, min 3), and **Toughest Schedule** (avg
   opponent Fargo). Names are clickable to the player page; minimum 5 matches to
   qualify.
 - **Head-to-Head** (top-level mode, or "Compare" from a player page): pick any two
